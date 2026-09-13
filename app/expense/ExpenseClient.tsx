@@ -278,30 +278,14 @@ export default function ExpenseDashboard() {
   // 🔥 FETCH DATA WHEN BRANCH CHANGES
   useEffect(() => {
     if (isMounted) {
-      // 🛟 DRAFT RESCUE & RETRIEVAL
-      const oldPers = localStorage.getItem('expense_ledger_personal');
+      // 💣 DRAFT RETRIEVAL: Load STRICTLY branch-specific drafts so they survive branch switches safely
       const savedPers = localStorage.getItem(`expense_ledger_personal_${activeBranchId}`);
-      
-      if (oldPers && !savedPers) {
-        setPendingPersonal(JSON.parse(oldPers));
-        // 🔥 REMOVED THE DELETE LINE! The old draft stays safe until you hit Submit.
-      } else if (savedPers) {
-        setPendingPersonal(JSON.parse(savedPers));
-      } else {
-        setPendingPersonal([createNewExpense()]);
-      }
+      if (savedPers) setPendingPersonal(JSON.parse(savedPers));
+      else setPendingPersonal([createNewExpense()]);
 
-      const oldBiz = localStorage.getItem('expense_ledger_business');
       const savedBiz = localStorage.getItem(`expense_ledger_business_${activeBranchId}`);
-      
-      if (oldBiz && !savedBiz) {
-        setPendingBusiness(JSON.parse(oldBiz));
-        // 🔥 REMOVED THE DELETE LINE! 
-      } else if (savedBiz) {
-        setPendingBusiness(JSON.parse(savedBiz));
-      } else {
-        setPendingBusiness([createNewExpense()]);
-      }
+      if (savedBiz) setPendingBusiness(JSON.parse(savedBiz));
+      else setPendingBusiness([createNewExpense()]);
 
       // 💣 SECURITY WIPE: Destroy all staff modals and inline edits
       setAdvanceModal({ isOpen: false, staff: null, amount: '', method: 'Cash ៛' });
