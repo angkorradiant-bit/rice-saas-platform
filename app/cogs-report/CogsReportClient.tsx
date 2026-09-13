@@ -58,6 +58,13 @@ export default function CogsReportPage() {
 
   // 🔥 Automatically refetches optimal data when you change tabs, dates, OR BRANCHES!
   useEffect(() => {
+    // 💣 SECURITY WIPE: Destroy active bulk selections and inline payment forms 
+    // when switching branches to prevent Cross-Tenant Ghost Settlements!
+    setSelectedDays([]);
+    setInlinePayments({});
+    setBulkPaymentRows([{ id: Date.now(), method: 'Mom Liability ៛', amount: '' }]);
+    setBulkModalOpen(false);
+
     if (fromDate && toDate) {
       fetchReportData();
     }

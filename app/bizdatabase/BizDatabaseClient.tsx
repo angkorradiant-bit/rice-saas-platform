@@ -105,6 +105,10 @@ export default function BizDatabase() {
   }, [activeBranchId])
 
   useEffect(() => { 
+    // 💣 SECURITY WIPE: Destroy any checked boxes immediately when switching branches 
+    // to prevent accidental cross-tenant deletions of overlapping database IDs!
+    setSelectedToDelete(new Set());
+    
     fetchData(false)
   }, [activeBranchId, timeFilter]) // 🔥 INFINITE FETCH FIX: Refetches instantly when date changes
 
@@ -112,13 +116,23 @@ export default function BizDatabase() {
 
   // --- DATABASE OPERATIONS ---
   async function fetchSettings() {
-    const { data } = await supabase.from('app_settings').select('*').in('setting_key', ['biz_col_widths', 'biz_sum_cols', 'biz_daily_cols', 'biz_retail_cols', 'biz_exp_cols'])
+    const branchSuffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
+    const keys = [
+      `biz_col_widths${branchSuffix}`, `biz_sum_cols${branchSuffix}`, 
+      `biz_daily_cols${branchSuffix}`, `biz_retail_cols${branchSuffix}`, `biz_exp_cols${branchSuffix}`
+    ];
+    // Fallback to global keys for new branches
+    const fallbackKeys = ['biz_col_widths', 'biz_sum_cols', 'biz_daily_cols', 'biz_retail_cols', 'biz_exp_cols'];
+
+    const { data } = await supabase.from('app_settings').select('*').in('setting_key', [...keys, ...fallbackKeys]);
     if (data) {
-      const widths = data.find(d => d.setting_key === 'biz_col_widths')
-      const sumCols = data.find(d => d.setting_key === 'biz_sum_cols')
-      const dalCols = data.find(d => d.setting_key === 'biz_daily_cols')
-      const retCols = data.find(d => d.setting_key === 'biz_retail_cols')
-      const expCols = data.find(d => d.setting_key === 'biz_exp_cols')
+      const getSetting = (key: string) => data.find(d => d.setting_key === `${key}${branchSuffix}`) || data.find(d => d.setting_key === key);
+
+      const widths = getSetting('biz_col_widths');
+      const sumCols = getSetting('biz_sum_cols');
+      const dalCols = getSetting('biz_daily_cols');
+      const retCols = getSetting('biz_retail_cols');
+      const expCols = getSetting('biz_exp_cols');
       
       if (widths?.setting_value) setColumnWidths(widths.setting_value)
       if (sumCols?.setting_value) setSummaryCols(sumCols.setting_value)
@@ -411,22 +425,24 @@ export default function BizDatabase() {
       return newOrder
     }
 
+    const branchSuffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
+
     if (activeTab === 'Wholesale Invoice Summary') {
       const updated = reorder(summaryCols)
       setSummaryCols(updated)
-      supabase.from('app_settings').upsert({ setting_key: 'biz_sum_cols', setting_value: updated }, { onConflict: 'setting_key' }).then()
+      supabase.from('app_settings').upsert({ setting_key: `biz_sum_cols${branchSuffix}`, setting_value: updated }, { onConflict: 'setting_key' }).then()
     } else if (activeTab === 'Walk-in Wholesale' || activeTab === 'Non-Walk-in Wholesale') {
       const updated = reorder(dailyCols)
       setDailyCols(updated)
-      supabase.from('app_settings').upsert({ setting_key: 'biz_daily_cols', setting_value: updated }, { onConflict: 'setting_key' }).then()
+      supabase.from('app_settings').upsert({ setting_key: `biz_daily_cols${branchSuffix}`, setting_value: updated }, { onConflict: 'setting_key' }).then()
     } else if (activeTab === 'Retails only') {
       const updated = reorder(retailCols)
       setRetailCols(updated)
-      supabase.from('app_settings').upsert({ setting_key: 'biz_retail_cols', setting_value: updated }, { onConflict: 'setting_key' }).then()
+      supabase.from('app_settings').upsert({ setting_key: `biz_retail_cols${branchSuffix}`, setting_value: updated }, { onConflict: 'setting_key' }).then()
     } else {
       const updated = reorder(expenseCols)
       setExpenseCols(updated)
-      supabase.from('app_settings').upsert({ setting_key: 'biz_exp_cols', setting_value: updated }, { onConflict: 'setting_key' }).then()
+      supabase.from('app_settings').upsert({ setting_key: `biz_exp_cols${branchSuffix}`, setting_value: updated }, { onConflict: 'setting_key' }).then()
     }
   }
 
@@ -450,7 +466,8 @@ export default function BizDatabase() {
       document.removeEventListener('touchmove', handleMove)
       document.removeEventListener('touchend', handleUp)
       
-      await supabase.from('app_settings').upsert({ setting_key: 'biz_col_widths', setting_value: widthsRef.current }, { onConflict: 'setting_key' })
+      const branchSuffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
+      await supabase.from('app_settings').upsert({ setting_key: `biz_col_widths${branchSuffix}`, setting_value: widthsRef.current }, { onConflict: 'setting_key' })
     }
 
     document.addEventListener('mousemove', handleMove)

@@ -497,6 +497,20 @@ export default function POSPage() {
     checkDeviceType();
     window.addEventListener('resize', checkDeviceType);
 
+    // 💣 SECURITY WIPE: Destroy active carts, UI overrides, and edit sessions
+    // when switching branches to prevent Cross-Tenant Checkout Corruption!
+    setCart([]);
+    setSelectedCustomerId('');
+    setCartCustomerNameOverride('');
+    setPaymentRows([{ id: Date.now(), method: 'Cash ៛', amount: '', isAuto: true }]);
+    setEditingInvoiceId(null);
+    setActiveFullScreen('none');
+    
+    // 🔥 If they switch branches while editing, instantly drop the URL parameter
+    if (typeof window !== 'undefined' && window.location.search.includes('edit=')) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     const stabilizeConnection = async () => {
       // 🔥 FIX: Ensures data fetches immediately regardless of hydration delay
       try {
@@ -562,11 +576,12 @@ export default function POSPage() {
     
     stabilizeConnection()
 
-    const posProductsChannel = supabase.channel('pos-products-update')
+    // 📡 WEBSOCKET ISOLATION: Append branch ID to prevent cross-tenant refresh chatter
+    const posProductsChannel = supabase.channel(`pos-products-update-${activeBranchId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => loadProductsAndSettings())
       .subscribe();
 
-    const posBatchesChannel = supabase.channel('pos-batches-update')
+    const posBatchesChannel = supabase.channel(`pos-batches-update-${activeBranchId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_batches' }, () => loadBatches())
       .subscribe();
 

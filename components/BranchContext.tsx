@@ -70,12 +70,20 @@ export function BranchProvider({ children }: { children: ReactNode }) {
 
   // 🔥 THE FIX: Whenever the admin selects a new branch from the dropdown, save it to memory!
   const handleSetBranch = (newBranchId: number) => {
-    setActiveBranchId(newBranchId);
-    localStorage.setItem('pos_active_branch_id', String(newBranchId));
-    
-    // Fire the custom event so other components know to refetch their data
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new Event('branch_changed'));
+    // Only trigger the wipe if they are ACTUALLY changing to a different branch
+    if (newBranchId !== activeBranchId) {
+      setActiveBranchId(newBranchId);
+      localStorage.setItem('pos_active_branch_id', String(newBranchId));
+      
+      // 💣 THE SECURITY WIPE: Destroy active cart and customer data to prevent cross-branch contamination!
+      localStorage.removeItem('pos_cart');
+      localStorage.removeItem('pos_customer');
+      localStorage.removeItem('pos_override');
+      
+      // Fire the custom event so other components know to refetch their data
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('branch_changed'));
+      }
     }
   };
 

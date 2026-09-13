@@ -339,6 +339,34 @@ export default function RiceControl() {
   };
 
   useEffect(() => { 
+    // 💣 SECURITY WIPE: Destroy all active edits, selections, import forms, 
+    // and modals when switching branches to prevent Cross-Tenant Data Corruption!
+    setEdits({});
+    setSelectedToDelete(new Set());
+    setSelectedSuppliersToDelete(new Set());
+    setEditingCell(null);
+    setHoveredId(null);
+    setActiveDropdownId(null);
+    setDropdownSearch('');
+    setIsSupplierDropdownOpen(false);
+    setIsProductDropdownOpen(false);
+    setSupplierSearch('');
+    setProductSearch('');
+    setImportForm({ supplier_id: '', product_id: '', qty: '', unit_cost: '', paid_amount: '', payment_method: 'Cash ៛' });
+    setIsAddSupplierOpen(false);
+    setNewSupplier({ name: '', phone: '', location: '' });
+    setPayPendingModal({isOpen: false, record: null, totalDue: 0});
+    setPendingPaymentRows([{ id: Date.now(), method: 'Cash ៛', amount: '' }]);
+    setRepackModal({ isOpen: false, product: null });
+    setIsAddModalOpen(false);
+    setNewItem({ name: '', price: 0 as any, cost_price: 0 as any, weight: 50 as any, stock: 0 as any, min_stock_level: 10 as any });
+    setMobileEditProduct(null);
+    setMobilePendingAction(null);
+    setMobileSupplierDetails(null);
+    setHistoryModal({ isOpen: false, product: null, data: [], activeBatches: [] });
+    setEditingHistoryId(null);
+    setHistoryEdits({});
+
     async function init() {
       setIsLoading(true);
       await Promise.all([

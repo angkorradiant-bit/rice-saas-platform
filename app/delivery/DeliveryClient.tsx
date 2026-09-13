@@ -134,9 +134,18 @@ export default function DeliveryPage() {
   };
 
   useEffect(() => {
+    // 💣 SECURITY WIPE: Destroy unsubmitted payment forms and active modals 
+    // when switching branches to prevent Cross-Tenant Ghost Payments!
+    setInlinePayments({});
+    setCreditPayments({});
+    setSelectedMobileDelivery(null);
+    setExpandedCredit(null);
+
     fetchDeliveries();
 
-    const deliveryChannel = supabase.channel('delivery-updates')
+    // 📡 WEBSOCKET ISOLATION: Append the branch ID to the channel name 
+    // so branches don't trigger unnecessary database refetches for each other!
+    const deliveryChannel = supabase.channel(`delivery-updates-${activeBranchId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoice_summaries' }, () => {
         fetchDeliveries();
       })

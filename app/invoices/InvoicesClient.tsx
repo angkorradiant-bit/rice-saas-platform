@@ -57,6 +57,10 @@ export default function InvoiceGallery() {
   }, []); // Empty array ensures this only overwrites the default ONCE when opening the page.
 
   useEffect(() => {
+    // 💣 SECURITY WIPE: Destroy active checkbox selections when switching branches 
+    // or tabs to prevent accidentally deleting image files from the wrong tenant!
+    setSelectedInvoices(new Set());
+
     setMounted(true);
     const isMobile = window.innerWidth < 1024 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     setIsDeviceMobile(isMobile);
