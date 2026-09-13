@@ -4143,7 +4143,7 @@ export default function POSPage() {
 {/* 🟢 FULL SCREEN TAKEOVER: IMPORT STOCK */}
       {/* 🔥 FIX: Added typeof document !== 'undefined' for Next.js SSR safety */}
       {isPosMounted && activeFullScreen === 'import' && typeof document !== 'undefined' && createPortal(
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#f8fafc', zIndex: 2147483647, overflowY: 'auto' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#f8fafc', zIndex: 999900, overflowY: 'auto' }}>
           
           <div style={{ 
             /* 🔥 FIX: Changed 48px to 16px. Because the burger icon is covered by the portal, we can move the title perfectly to the top left! */
@@ -4275,7 +4275,7 @@ export default function POSPage() {
       {/* 🟢 FULL SCREEN TAKEOVER: MIX RICE */}
       {/* 🔥 FIX: Added typeof document !== 'undefined' for Next.js SSR safety */}
       {isPosMounted && activeFullScreen === 'mix' && typeof document !== 'undefined' && createPortal(
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#f8fafc', zIndex: 2147483647, overflowY: 'auto', paddingBottom: '100px' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#f8fafc', zIndex: 999900, overflowY: 'auto', paddingBottom: '100px' }}>
           
           <div style={{ 
             /* 🔥 FIX: Changed 48px to 16px. Because the burger icon is covered by the portal, we can move the title perfectly to the top left! */
@@ -4498,7 +4498,7 @@ export default function POSPage() {
 
       {/* 🟢 PORTAL: ADD SUPPLIER MODAL (FORCED TOP Z-INDEX) */}
       {isAddSupplierOpen && typeof document !== 'undefined' && createPortal(
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', zIndex: 1000000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', zIndex: 2147483647, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ background: '#ffffff', borderRadius: '12px', width: '100%', maxWidth: '400px', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', animation: 'posPopupSlideDown 0.2s ease-out' }}>
             <h2 style={{ margin: '0 0 16px 0', fontSize: '18px', color: '#0f172a' }}>🏢 Add New Supplier</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -4517,7 +4517,7 @@ export default function POSPage() {
 
       {/* 🟢 PORTAL: CREATE NEW PRODUCT MODAL (FORCED TOP Z-INDEX) */}
       {isAddModalOpen && typeof document !== 'undefined' && createPortal(
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', zIndex: 1000000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', zIndex: 2147483647, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ background: '#ffffff', borderRadius: '12px', width: '100%', maxWidth: '500px', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', animation: 'posPopupSlideDown 0.2s ease-out' }}>
             <h2 style={{ margin: '0 0 16px 0', fontSize: '18px', color: '#0f172a' }}>📦 Add New Product</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>

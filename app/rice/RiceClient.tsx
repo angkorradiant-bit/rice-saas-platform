@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom' // 👈 🔥 ADD THIS LINE!
 import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { formatRiel, formatUSD, formatNumber, EXCHANGE_RATE } from '@/utils/formatters'
@@ -329,10 +330,11 @@ export default function RiceControl() {
   const handleOpenAddProduct = () => {
     setNewItem({
       name: '',
-      price: '' as any, // 🔥 Default to empty string for cleaner UI
-      cost_price: '' as any, // 🔥 Default to empty string for cleaner UI
-      weight: activeView === 'retail' ? 1 : 50,
-      stock: '' as any, // 🔥 Default to empty string
+      price: '' as any, 
+      cost_price: '' as any, 
+      // 🔥 UI FIX: Make weight blank for Wholesale so you are forced to type 10, 25, or 50!
+      weight: activeView === 'retail' ? 1 : '' as any,
+      stock: '' as any, 
       min_stock_level: 10 as any
     });
     setIsAddModalOpen(true);
@@ -1013,7 +1015,25 @@ export default function RiceControl() {
     }
   }
 
-const addProduct = async () => {
+// 🔥 SMART TYPIST: Auto-extracts weight from product name!
+  const handleProductNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newName = e.target.value;
+    let newWeight = newItem.weight;
+    
+    // Only auto-adjust if we are making a Wholesale/Import bag
+    if (activeView !== 'retail') {
+      const kgMatch = newName.match(/(\d+(?:\.\d+)?)\s*kg/i);
+      if (kgMatch) {
+        newWeight = Number(kgMatch[1]);
+      } else {
+        newWeight = '' as any; // Default back to blank if no "kg" is found
+      }
+    }
+    
+    setNewItem({ ...newItem, name: newName, weight: newWeight });
+  };
+
+  const addProduct = async () => {
     if (!newItem.name) return showToast('error', 'Missing Data', 'Name is required');
 
     // 🔥 AUTO-APPEND SUPPLIER NAME WITH A SPACE (NO HYPHEN)
@@ -1247,8 +1267,9 @@ const addProduct = async () => {
     .filter(p => {
       const isEditingThisRow = editingCell?.id === p.id;
       if (debouncedSearch && !p.name?.toLowerCase().includes(debouncedSearch.toLowerCase())) return false;
-      if (activeView === 'retail' && Number(p.weight) >= 25) return false; 
-      if (activeView === 'wholesale' && Number(p.weight) < 25) return false;
+      // 🔥 ARCHITECTURE FIX: 1kg is Retail (Loose). Anything heavier is Wholesale (Sealed Bag).
+      if (activeView === 'retail' && Number(p.weight) > 1) return false; 
+      if (activeView === 'wholesale' && Number(p.weight) <= 1) return false;
       if (activeView === 'wholesale') {
         if (activeCategory === '❌ Out of Stock') {
             if (!isEditingThisRow && Number(p.stock) > 0) return false;
@@ -1626,10 +1647,10 @@ const addProduct = async () => {
                                         <input autoFocus className="saas-input" placeholder="Search Wholesale bag..." value={dropdownSearch} onChange={e => setDropdownSearch(e.target.value)} onBlur={() => setTimeout(() => setActiveDropdownId(null), 200)} onKeyDown={e => e.key === 'Escape' && setActiveDropdownId(null)} />
 <div className="dropdown-results-tray">
   <div className="dropdown-row clear-option" onMouseDown={(e) => { e.stopPropagation(); handleLinkWholesaleBag(p.id, null); }}>❌ Clear Linked Bag</div>
-  {products.filter(wp => wp.weight >= 25 && wp.name.toLowerCase().includes(dropdownSearch.toLowerCase())).map(wp => (
+  {products.filter(wp => wp.weight > 1 && Number(wp.stock) > 0 && wp.name.toLowerCase().includes(dropdownSearch.toLowerCase())).map(wp => (
                                             <div key={wp.id} className="dropdown-row" onMouseDown={(e) => { e.stopPropagation(); handleLinkWholesaleBag(p.id, wp); }}>
                                               <span style={{ fontWeight: 'normal', color: '#334155' }}>{wp.name}</span>
-                                              <span style={{ fontSize: '11px', color: '#64748b' }}> ({formatRiel(wp.cost_price)})</span>
+                                              <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px' }}>(Stock: {wp.stock} • {formatRiel(Number(wp.cost_price))})</span>
                                             </div>
                                           ))}
                                         </div>
@@ -1890,8 +1911,8 @@ const addProduct = async () => {
                     />
                     <div className="dropdown-results-tray">
                       {products.filter(p => {
-                        // 1. Must be wholesale
-                        if (p.weight < 50) return false;
+                        // 1. Must be a Sealed Bag (Weight greater than 1kg)
+                        if (p.weight <= 1) return false;
                         
                         // 2. Must match user's text search (if typing)
                         if (productSearch && !p.name.toLowerCase().includes(productSearch.toLowerCase())) return false;
@@ -2279,7 +2300,7 @@ const addProduct = async () => {
         {mobileEditProduct && (() => {
             const p = mobileEditProduct; 
 
-            const wpList = products.filter(wp => wp.weight >= 25);
+            const wpList = products.filter(wp => wp.weight > 1);
             const parentWp = p.linked_wholesale_id ? wpList.find(x => x.id === p.linked_wholesale_id) : null;
             
             // Extract the active batches for this specific product
@@ -2354,33 +2375,65 @@ const addProduct = async () => {
 
                 {activeView === 'retail' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ position: 'relative', zIndex: isMobileLinkDropdownOpen ? 100 : 2 }}>
+                    <div style={{ position: 'relative' }}>
                       <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', margin: '0 0 6px 0' }}>🔗 Link to Wholesale Bag</label>
-                      {isMobileLinkDropdownOpen ? (
-                         <div style={{ position: 'relative' }}>
-                            <input 
-                              autoFocus 
-                              className="saas-input" 
-                              placeholder="Search Wholesale bag..." 
-                              value={mobileLinkSearch} 
-                              onChange={e => setMobileLinkSearch(e.target.value)} 
-                              onBlur={() => setTimeout(() => setIsMobileLinkDropdownOpen(false), 200)} 
-                              onKeyDown={e => e.key === 'Escape' && setIsMobileLinkDropdownOpen(false)} 
-                            />
-                            <div className="dropdown-results-tray">
-                              <div className="dropdown-row clear-option" onMouseDown={(e) => { e.stopPropagation(); handleLinkWholesaleBag(p.id, null); setMobileEditProduct({...p, linked_wholesale_id: null}); setIsMobileLinkDropdownOpen(false); }}>❌ Clear Linked Bag</div>
-                              {wpList.filter(wp => wp.name.toLowerCase().includes(mobileLinkSearch.toLowerCase())).map(wp => (
-                                 <div key={wp.id} className="dropdown-row" onMouseDown={(e) => { e.stopPropagation(); handleLinkWholesaleBag(p.id, wp); setMobileEditProduct({...p, linked_wholesale_id: wp.id}); setIsMobileLinkDropdownOpen(false); }}>
-                                    <span style={{ fontWeight: 'normal', color: '#334155' }}>{wp.name}</span>
-                                    <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px' }}>({formatRiel(Number(wp.cost_price))})</span>
-                                 </div>
-                              ))}
+                      
+                      {/* Trigger Button */}
+                      <div className="interactive-select-trigger" onClick={() => { setIsMobileLinkDropdownOpen(true); setMobileLinkSearch(''); }} style={{ width: '100%', background: '#fff' }}>
+                         {parentWp ? `🌾 ${parentWp.name}` : '🔍 Search & Link Wholesale Bag...'}
+                      </div>
+
+                      {/* 🔥 FULL-SCREEN PORTAL FOR BAG SEARCH (Like Search Customer) */}
+                      {isMobileLinkDropdownOpen && typeof document !== 'undefined' && createPortal(
+                        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', zIndex: 2147483647, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: 'max(16px, env(safe-area-inset-top, 16px)) 16px 16px 16px', backdropFilter: 'blur(2px)' }} onMouseDown={() => { setIsMobileLinkDropdownOpen(false); setMobileLinkSearch(''); }}>
+                          <div 
+                            onMouseDown={(e) => e.stopPropagation()}
+                            style={{ backgroundColor: '#f8fafc', borderRadius: '12px', width: '100%', maxWidth: '500px', maxHeight: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'posPopupSlideDown 0.2s ease-out' }}
+                          >
+                            {/* Search Header */}
+                            <div style={{ display: 'flex', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e2e8f0', gap: '8px', backgroundColor: '#ffffff', flexShrink: 0 }}>
+                              <div style={{ position: 'relative', flex: 1 }}>
+                                <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: '16px' }}>🔍</span>
+                                <input 
+                                  autoFocus
+                                  type="text"
+                                  placeholder="Search Wholesale bag..."
+                                  value={mobileLinkSearch}
+                                  onChange={e => setMobileLinkSearch(e.target.value)}
+                                  style={{ width: '100%', padding: '10px 12px 10px 36px', fontSize: '14px', border: '1px solid #3b82f6', borderRadius: '6px', outline: 'none', color: '#0f172a', boxSizing: 'border-box' }}
+                                />
+                              </div>
+                              <button onClick={(e) => { e.preventDefault(); setIsMobileLinkDropdownOpen(false); setMobileLinkSearch(''); }} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '24px', cursor: 'pointer', padding: '0 4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                ✕
+                              </button>
                             </div>
-                         </div>
-                      ) : (
-                         <div className="interactive-select-trigger" onClick={() => { setIsMobileLinkDropdownOpen(true); setMobileLinkSearch(''); }} style={{ width: '100%', background: '#fff' }}>
-                            {parentWp ? `🌾 ${parentWp.name}` : '🔍 Search & Link Wholesale Bag...'}
-                         </div>
+                            
+                            {/* Results List */}
+                            <div className="hide-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '16px', backgroundColor: '#f8fafc' }}>
+                              <button onClick={(e) => { e.preventDefault(); handleLinkWholesaleBag(p.id, null); setMobileEditProduct({...p, linked_wholesale_id: null}); setIsMobileLinkDropdownOpen(false); }} className="saas-btn" style={{ width: '100%', padding: '12px', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px dashed #fca5a5', borderRadius: '8px', cursor: 'pointer', fontWeight: 500, fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
+                                ❌ Clear Linked Bag
+                              </button>
+
+                              {wpList.filter(wp => Number(wp.stock) > 0 && wp.name.toLowerCase().includes(mobileLinkSearch.toLowerCase())).length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '16px', color: '#94a3b8', fontSize: '14px' }}>No bags in stock</div>
+                              ) : (
+                                <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
+                                  {wpList.filter(wp => Number(wp.stock) > 0 && wp.name.toLowerCase().includes(mobileLinkSearch.toLowerCase())).map((wp, index, arr) => (
+                                    <div 
+                                      key={wp.id} 
+                                      onClick={(e) => { e.preventDefault(); handleLinkWholesaleBag(p.id, wp); setMobileEditProduct({...p, linked_wholesale_id: wp.id}); setIsMobileLinkDropdownOpen(false); }} 
+                                      style={{ padding: '12px 16px', cursor: 'pointer', backgroundColor: '#ffffff', borderBottom: index === arr.length - 1 ? 'none' : '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                                    >
+                                      <span style={{ fontWeight: 500, fontSize: '14px', color: '#0f172a' }}>{wp.name}</span>
+                                      <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold' }}>Stock: {wp.stock} | <span style={{ fontWeight: 'normal' }}>{formatRiel(Number(wp.cost_price))} ៛</span></span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>,
+                        document.body
                       )}
                     </div>
 
@@ -2772,26 +2825,26 @@ const addProduct = async () => {
           <div>
             <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', margin: '0 0 6px 0' }}>Product Name</label>
             {activeView === 'import' && importForm.supplier_id ? (() => {
-              const supName = suppliers.find(s => String(s.id) === String(importForm.supplier_id))?.name || '';
-              return (
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                  <input 
-                    autoFocus 
-                    placeholder="e.g. Malis" 
-                    value={newItem.name} 
-                    onChange={e => setNewItem({...newItem, name: e.target.value})} 
-                    className="saas-input" 
-                    style={{ width: '100%', paddingRight: '120px' }} 
-                  />
-                  {/* 🔥 Visual Ghost Text without hyphen */}
-                  <span style={{ position: 'absolute', right: '12px', color: '#94a3b8', fontSize: '14px', pointerEvents: 'none', fontWeight: 'bold' }}>
-                    {supName}
-                  </span>
-                </div>
-              );
-            })() : (
-              <input autoFocus placeholder="" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} className="saas-input" style={{width:'100%'}}/>
-            )}
+                const supName = suppliers.find(s => String(s.id) === String(importForm.supplier_id))?.name || '';
+                return (
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <input 
+                      autoFocus 
+                      placeholder="e.g. Malis 25kg" 
+                      value={newItem.name} 
+                      onChange={handleProductNameChange} 
+                      className="saas-input" 
+                      style={{ width: '100%', paddingRight: '120px' }} 
+                    />
+                    {/* 🔥 Visual Ghost Text without hyphen */}
+                    <span style={{ position: 'absolute', right: '12px', color: '#94a3b8', fontSize: '14px', pointerEvents: 'none', fontWeight: 'bold' }}>
+                      {supName}
+                    </span>
+                  </div>
+                );
+              })() : (
+                <input autoFocus placeholder="e.g. Malis 25kg" value={newItem.name} onChange={handleProductNameChange} className="saas-input" style={{width:'100%'}}/>
+              )}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             <div>
