@@ -755,8 +755,34 @@ export default function POSPage() {
   const importTotalCalc = (Number(importForm.qty) || 0) * (Number(importForm.unit_cost) || 0);
 
   const handleOpenAddProduct = () => {
-    setNewItem({ name: '', price: 0, cost_price: 0, weight: 50, stock: 0, min_stock_level: 10 });
+    setNewItem({ 
+      name: '', 
+      price: '' as any, 
+      cost_price: '' as any, 
+      // 🔥 UI FIX: Make weight blank for Wholesale so you are forced to type 10, 25, or 50!
+      weight: (activeTab === 'retail' && activeFullScreen === 'none') ? 1 : ('' as any), 
+      stock: '' as any, 
+      min_stock_level: 10 as any 
+    });
     setIsAddModalOpen(true);
+  };
+
+  // 🔥 SMART TYPIST: Auto-extracts weight from product name!
+  const handleProductNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newName = e.target.value;
+    let newWeight = newItem.weight;
+    
+    // Only auto-adjust if we are making a Wholesale/Import bag
+    if (activeTab !== 'retail' || activeFullScreen !== 'none') {
+      const kgMatch = newName.match(/(\d+(?:\.\d+)?)\s*kg/i);
+      if (kgMatch) {
+        newWeight = Number(kgMatch[1]);
+      } else {
+        newWeight = '' as any; // Default back to blank if no "kg" is found
+      }
+    }
+    
+    setNewItem({ ...newItem, name: newName, weight: newWeight });
   };
 
   const addProduct = async () => {
@@ -1782,8 +1808,14 @@ export default function POSPage() {
 
       const finalSaleRows = baseSaleRows.map(r => {
         const { db_row_id, ...cleanRow } = r;
-        if (db_row_id) return { ...cleanRow, id: db_row_id, invoice_id: activeTxId, payment_method: primaryMethodStr };
-        return { ...cleanRow, invoice_id: activeTxId, payment_method: primaryMethodStr };
+        
+        // 🔥 FIX: Wholesale uses 'invoice_id', Retail uses 'transaction_id'
+        const txPayload = activeTab === 'retail' 
+            ? { transaction_id: activeTxId } 
+            : { invoice_id: activeTxId };
+            
+        if (db_row_id) return { ...cleanRow, id: db_row_id, ...txPayload, payment_method: primaryMethodStr };
+        return { ...cleanRow, ...txPayload, payment_method: primaryMethodStr };
       });
 
       const rowsWithId = finalSaleRows.filter(r => r.id);
@@ -1988,8 +2020,9 @@ export default function POSPage() {
   const filteredProducts = orderedProducts.filter(p => {
     if (searchQuery && !p.name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     const weightVal = parseFloat(String(p.weight) || '0');
-    if (activeTab === 'wholesale' && weightVal < 25) return false; // 🔥 Catches 25kg+ bags
-    if (activeTab === 'retail' && weightVal >= 25) return false; // 🔥 Catches 25kg+ bags
+    // 🔥 ARCHITECTURE FIX: 1kg is strictly Retail (Loose). Anything heavier is Wholesale (Sealed Bag).
+    if (activeTab === 'wholesale' && weightVal <= 1) return false; 
+    if (activeTab === 'retail' && weightVal > 1) return false;
 
     if (activeTab === 'retail') {
       const isHidden = hiddenRetailIds.includes(p.id);
@@ -4523,7 +4556,8 @@ export default function POSPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
                 <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', margin: '0 0 6px 0' }}>Product Name</label>
-                <input autoFocus placeholder="" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} className="saas-input" style={{width:'100%'}}/>
+                {/* 🔥 Connected the Smart Typist onChange handler here */}
+                <input autoFocus placeholder="e.g. Malis 25kg" value={newItem.name} onChange={handleProductNameChange} className="saas-input" style={{width:'100%'}}/>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div>
