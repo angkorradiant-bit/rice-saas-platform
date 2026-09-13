@@ -76,10 +76,16 @@ const [newMixPrice, setNewMixPrice] = useState<number | string>(0)
 const [newMixType, setNewMixType] = useState<'wholesale' | 'half' | 'retail'>('wholesale')
 
 useEffect(() => {
-fetchProducts()
-fetchBatches()
-fetchHistory()
-}, [activeBranchId])
+    // 💣 SECURITY WIPE: Destroy ghost form data and active edits when switching 
+    // branches to prevent injecting Branch A's product IDs into Branch B's database!
+    handleReset();
+    setEditingHistoryId(null);
+    setHistoryEdits({});
+    
+    fetchProducts();
+    fetchBatches();
+    fetchHistory();
+  }, [activeBranchId])
 
 const rice1 = products.find(p => p.id.toString() === rice1Id)
 const rice2 = products.find(p => p.id.toString() === rice2Id)

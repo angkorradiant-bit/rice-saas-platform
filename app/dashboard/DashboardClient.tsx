@@ -99,6 +99,12 @@ export default function DashboardPage() {
       // 🔥 SECURITY FIX: Isolate app settings fetches by branch to prevent global cross-tenant data leaks
       const keys = activeBranchId === 0 ? baseKeys : baseKeys.map(k => `${k}_${activeBranchId}`);
       const { data: capData } = await supabase.from('app_settings').select('*').in('setting_key', keys)
+      
+      // 💣 SECURITY WIPE: Force all manual accounting states to Zero. 
+      // Prevents Branch A's cash drawer from bleeding into Branch B if Branch B has no saved settings yet!
+      setBaseCapital(0); setInitCashRiel(0); setInitCashUsd(0); setInitQrRiel(0); setInitQrUsd(0); 
+      setPersOweRiel(0); setPersOweUsd(0); setFamilyOweRiel(0); setFamilyOweUsd(0);
+
       if (capData) {
         capData.forEach((s: any) => {
           const rawKey = activeBranchId === 0 ? s.setting_key : s.setting_key.replace(`_${activeBranchId}`, '');

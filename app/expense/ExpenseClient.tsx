@@ -287,6 +287,20 @@ export default function ExpenseDashboard() {
   // 🔥 FETCH DATA WHEN BRANCH CHANGES
   useEffect(() => {
     if (isMounted) {
+      // 💣 SECURITY WIPE: Destroy all active expense drafts, staff modals, 
+      // and inline edits when switching branches to prevent Cross-Tenant Data Smuggling!
+      setPendingPersonal([createNewExpense()]);
+      setPendingBusiness([createNewExpense()]);
+      setAdvanceModal({ isOpen: false, staff: null, amount: '', method: 'Cash ៛' });
+      setLeaveModal({ isOpen: false, staff: null, quota: '', days: 1, reason: '' });
+      setSettleModal({ isOpen: false, staff: null, amount: '', method: 'Cash ៛' });
+      setHistoryModal({ isOpen: false, staff: null, activeTab: 'debt', debtHistory: [], leaveHistory: [] });
+      setConfirmModal(false);
+      setEditingCell(null);
+      setNewStaffName('');
+      setNewStaffSalary('');
+      setNewStaffQuota(12);
+
       fetchStaff();
       fetchDatabase();
     }

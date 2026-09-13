@@ -26,10 +26,19 @@ export default function ReportControlPage() {
   const [invoicePayments, setInvoicePayments] = useState<any[]>([])
 
   useEffect(() => {
+    // 💣 SECURITY WIPE: Clear all report arrays instantly on branch switch
+    // to prevent "Ghost Dashboards" from showing Branch A's data while Branch B loads.
+    setWholesaleSales([])
+    setInvoices([])
+    setRetailSales([])
+    setExpenses([])
+    setInvoicePayments([])
+
     fetchReportData()
 
-    // 🛡️ INTEGRATION FIX: Bind the dashboard to the global WebSocket network so it never goes stale
-    const reportSyncChannel = supabase.channel('report-live-sync')
+    // 📡 WEBSOCKET ISOLATION: Append activeBranchId to the channel
+    // to prevent Branch A's transactions from triggering Branch B's refetches!
+    const reportSyncChannel = supabase.channel(`report-live-sync-${activeBranchId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => fetchReportData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'retail_sales' }, () => fetchReportData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => fetchReportData())

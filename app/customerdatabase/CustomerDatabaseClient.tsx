@@ -59,6 +59,14 @@ export default function CustomerDatabasePage() {
 
   // --- LIFECYCLE ---
   useEffect(() => {
+    // 💣 SECURITY WIPE: Destroy active selections, inline edits, and mobile modals
+    // when switching branches to prevent Cross-Tenant Ghost Deletions!
+    setSelectedToDelete(new Set());
+    setEditingCell(null);
+    setMobileEditCustomer(null);
+    setShowAddModal(false);
+    setNewCustomer({ name: '', owner: 'Both', type: 'ហូប', phone: '', location: '', google_map: '' });
+
     loadCustomers()
     fetchSettings()
   }, [activeBranchId]) 
@@ -67,10 +75,14 @@ export default function CustomerDatabasePage() {
 
   // --- DATABASE OPERATIONS ---
   async function fetchSettings() {
-    const { data } = await supabase.from('app_settings').select('*').in('setting_key', ['cust_col_widths', 'cust_col_order'])
+    const branchSuffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
+    const keys = [`cust_col_widths${branchSuffix}`, `cust_col_order${branchSuffix}`];
+    const fallbackKeys = ['cust_col_widths', 'cust_col_order'];
+
+    const { data } = await supabase.from('app_settings').select('*').in('setting_key', [...keys, ...fallbackKeys]);
     if (data) {
-      const widths = data.find(d => d.setting_key === 'cust_col_widths')
-      const order = data.find(d => d.setting_key === 'cust_col_order')
+      const widths = data.find(d => d.setting_key === `cust_col_widths${branchSuffix}`) || data.find(d => d.setting_key === 'cust_col_widths');
+      const order = data.find(d => d.setting_key === `cust_col_order${branchSuffix}`) || data.find(d => d.setting_key === 'cust_col_order');
       
       if (widths && widths.setting_value) {
         setColumnWidths({ ...DEFAULT_WIDTHS, ...widths.setting_value })
