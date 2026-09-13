@@ -260,17 +260,8 @@ export default function ExpenseDashboard() {
     setInsightFrom(today)
     setInsightTo(today)
     
-    const savedPers = localStorage.getItem('expense_ledger_personal');
-    const savedBiz = localStorage.getItem('expense_ledger_business');
     // 🔥 CACHE BUSTER: Added '_v2' so the browser forgets the old tab layout!
     const savedDbTabOrder = localStorage.getItem('expense_db_tab_order_v2'); 
-    
-    if (savedPers) setPendingPersonal(JSON.parse(savedPers));
-    else setPendingPersonal([createNewExpense()]);
-    
-    if (savedBiz) setPendingBusiness(JSON.parse(savedBiz));
-    else setPendingBusiness([createNewExpense()]);
-
     if (savedDbTabOrder) {
       try { setDbTabOrder(JSON.parse(savedDbTabOrder)); } catch(e){}
     }
@@ -287,10 +278,16 @@ export default function ExpenseDashboard() {
   // 🔥 FETCH DATA WHEN BRANCH CHANGES
   useEffect(() => {
     if (isMounted) {
-      // 💣 SECURITY WIPE: Destroy all active expense drafts, staff modals, 
-      // and inline edits when switching branches to prevent Cross-Tenant Data Smuggling!
-      setPendingPersonal([createNewExpense()]);
-      setPendingBusiness([createNewExpense()]);
+      // 💣 DRAFT RETRIEVAL: Load branch-specific drafts so they survive branch switches
+      const savedPers = localStorage.getItem(`expense_ledger_personal_${activeBranchId}`);
+      if (savedPers) setPendingPersonal(JSON.parse(savedPers));
+      else setPendingPersonal([createNewExpense()]);
+
+      const savedBiz = localStorage.getItem(`expense_ledger_business_${activeBranchId}`);
+      if (savedBiz) setPendingBusiness(JSON.parse(savedBiz));
+      else setPendingBusiness([createNewExpense()]);
+
+      // 💣 SECURITY WIPE: Destroy all staff modals and inline edits
       setAdvanceModal({ isOpen: false, staff: null, amount: '', method: 'Cash ៛' });
       setLeaveModal({ isOpen: false, staff: null, quota: '', days: 1, reason: '' });
       setSettleModal({ isOpen: false, staff: null, amount: '', method: 'Cash ៛' });
@@ -308,25 +305,25 @@ export default function ExpenseDashboard() {
 
   useEffect(() => {
     if (isMounted) {
-      localStorage.setItem('expense_ledger_personal', JSON.stringify(pendingPersonal));
+      localStorage.setItem(`expense_ledger_personal_${activeBranchId}`, JSON.stringify(pendingPersonal));
       const existingDate = localStorage.getItem('expense_ledger_date');
       if (!existingDate) {
         const todayCambodia = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Phnom_Penh' });
         localStorage.setItem('expense_ledger_date', expenseDate || todayCambodia);
       }
     }
-  }, [pendingPersonal, expenseDate, isMounted]);
+  }, [pendingPersonal, expenseDate, isMounted, activeBranchId]);
 
   useEffect(() => {
     if (isMounted) {
-      localStorage.setItem('expense_ledger_business', JSON.stringify(pendingBusiness));
+      localStorage.setItem(`expense_ledger_business_${activeBranchId}`, JSON.stringify(pendingBusiness));
       const existingDate = localStorage.getItem('expense_ledger_date');
       if (!existingDate) {
         const todayCambodia = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Phnom_Penh' });
         localStorage.setItem('expense_ledger_date', expenseDate || todayCambodia);
       }
     }
-  }, [pendingBusiness, expenseDate, isMounted]);
+  }, [pendingBusiness, expenseDate, isMounted, activeBranchId]);
 
   useEffect(() => {
     // 🔥 CACHE BUSTER: Saves to the new v2 layout list
@@ -387,7 +384,9 @@ export default function ExpenseDashboard() {
   // --- API: Fetch Staff ---
   async function fetchStaff() {
     setIsFetchingStaff(true)
-    const { data } = await supabase.from('staff').select('*').eq('branch_id', activeBranchId).order('id', { ascending: true }) // 🔥 BRANCH FILTER
+    let q = supabase.from('staff').select('*').order('id', { ascending: true });
+    if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId); // 🔥 DYNAMIC BRANCH FILTER
+    const { data } = await q;
     if (data) setStaffList(data)
     setIsFetchingStaff(false)
   }
@@ -395,10 +394,15 @@ export default function ExpenseDashboard() {
   // --- API: Fetch Database Tab ---
   async function fetchDatabase() {
     setIsFetchingDb(true)
-    const [ {data: exp}, {data: debt} ] = await Promise.all([
-       supabase.from('expenses').select('*').eq('branch_id', activeBranchId).order('created_at', { ascending: false }).limit(2000), // 🔥 BRANCH FILTER
-       supabase.from('staff_debt_history').select('*, staff:staff_id(name)').eq('branch_id', activeBranchId).order('created_at', { ascending: false }).limit(2000) // 🔥 BRANCH FILTER
-    ])
+    
+    let expQuery = supabase.from('expenses').select('*').order('created_at', { ascending: false }).limit(2000);
+    if (activeBranchId !== 0) expQuery = expQuery.eq('branch_id', activeBranchId); // 🔥 DYNAMIC BRANCH FILTER
+
+    let debtQuery = supabase.from('staff_debt_history').select('*, staff:staff_id(name)').order('created_at', { ascending: false }).limit(2000);
+    if (activeBranchId !== 0) debtQuery = debtQuery.eq('branch_id', activeBranchId); // 🔥 DYNAMIC BRANCH FILTER
+
+    const [ {data: exp}, {data: debt} ] = await Promise.all([ expQuery, debtQuery ])
+    
     setDbExpenses(exp || []);
     setDbStaffDebt(debt || []);
     setIsFetchingDb(false)
