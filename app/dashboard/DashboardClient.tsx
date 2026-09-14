@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { formatRiel, formatUSD, formatNumber, parseOwner, EXCHANGE_RATE } from '@/utils/formatters'
 import { CurrencyInput } from '@/components/Inputs'
@@ -9,6 +9,7 @@ import TableSkeleton from '@/components/TableSkeleton'
 import EmptyState from '@/components/EmptyState'
 import { useBranch } from '@/components/BranchContext' 
 import AdminGuard from '@/components/AdminGuard' 
+import { useFocusRefresh } from '@/lib/useFocusRefresh' // 🔥 FIX: Added missing import
 
 const formatUSDEquiv = (vRiel: number) => formatUSD(vRiel / EXCHANGE_RATE);
 
@@ -47,91 +48,85 @@ export default function DashboardPage() {
   const [invTabOrder, setInvTabOrder] = useState(['wholesale_active', 'wholesale_oos', 'retail'])
   const [invSortConfig, setInvSortConfig] = useState<{key: string, direction: 'asc' | 'desc'} | null>(null)
 
-  useEffect(() => {
-    async function loadData(silent = false) {
-      if (!silent) setIsLoading(true);
-      const now = new Date();
-      const firstDayOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+  // 🔥 CLOSURE FIX: Wrap in useCallback so it tightly binds to the current active branch
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setIsLoading(true);
 
-      const buildQ = (table: string) => {
-        let q = supabase.from(table).select('*');
-        if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId);
-        return q;
-      }
-      
-      const buildQNarrow = (table: string, columns: string) => {
-        let q = supabase.from(table).select(columns);
-        if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId);
-        return q;
-      }
-
-      // 🔥 PHASE 4 PAYLOAD OPTIMIZATION: Narrowed columns slash RAM usage by 80%
-      // 🛡️ FINANCIAL FIX: Removed date limits from ledger tables so calculateAssets() computes accurate LIFETIME Cash, QR, and Net Worth. 
-      const [
-        {data: salesData}, {data: sumData}, {data: retData}, {data: expData}, 
-        {data: staffData}, {data: prodData}, {data: apData}, {data: cogsData}, 
-        {data: batchData}, {data: invPayData}
-      ] = await Promise.all([
-        buildQNarrow('sales', 'id, created_at, qty, price_per_bag, cogs_price, owner, custom_rice_type, rice_type, invoice_id').eq('is_voided', false),
-        buildQNarrow('invoice_summaries', 'invoice_id, owner, balance_due').eq('is_done', false),
-        buildQNarrow('retail_sales', 'id, created_at, qty, price_per_bag, cogs_price, owner, custom_rice_type, rice_type, transaction_id, payment_method, total_sales').eq('is_voided', false),
-        buildQNarrow('expenses', 'id, created_at, amount_riel, amount_usd, payment_method, spender, description, remarks'),
-        buildQ('staff'),
-        buildQNarrow('products', 'id, name, stock, cost_price, weight, linked_wholesale_id').order('id'),
-        buildQNarrow('accounts_payable', 'id, amount_riel, amount_usd, status').eq('status', 'Unpaid'),
-        buildQNarrow('cogs_settlements', 'payment_method, paid_amount_riel, paid_amount_usd, owner_name'),
-        buildQNarrow('inventory_batches', 'id, product_id, remaining_qty, cost_price, created_at').gt('remaining_qty', 0),
-        buildQNarrow('invoice_payments', 'invoice_id, payment_method, amount_paid_riel, amount_paid_usd, recorded_by, payment_date').eq('is_voided', false) 
-      ]);
-
-      setWholesaleSales(salesData || []); 
-      setInvoiceSummaries(sumData || []); 
-      setRetailSales(retData || []); 
-      setExpenses(expData || []); 
-      setStaffList(staffData || []); 
-      setInventoryList(prodData || []); 
-      setAccountsPayable(apData || []); 
-      setCogsSettlements(cogsData || []); 
-      setPriceHistory(batchData || []); 
-      setInvoicePayments(invPayData || []);
-
-      const baseKeys = ['base_capital', 'initial_cash_riel', 'initial_cash_usd', 'initial_qr_riel', 'initial_qr_usd', 'personal_owe_riel', 'personal_owe_usd', 'family_owe_riel', 'family_owe_usd'];
-      // 🔥 SECURITY FIX: Isolate app settings fetches by branch to prevent global cross-tenant data leaks
-      const keys = activeBranchId === 0 ? baseKeys : baseKeys.map(k => `${k}_${activeBranchId}`);
-      const { data: capData } = await supabase.from('app_settings').select('*').in('setting_key', keys)
-      
-      // 💣 SECURITY WIPE: Force all manual accounting states to Zero. 
-      // Prevents Branch A's cash drawer from bleeding into Branch B if Branch B has no saved settings yet!
-      setBaseCapital(0); setInitCashRiel(0); setInitCashUsd(0); setInitQrRiel(0); setInitQrUsd(0); 
-      setPersOweRiel(0); setPersOweUsd(0); setFamilyOweRiel(0); setFamilyOweUsd(0);
-
-      if (capData) {
-        capData.forEach((s: any) => {
-          const rawKey = activeBranchId === 0 ? s.setting_key : s.setting_key.replace(`_${activeBranchId}`, '');
-          if (rawKey === 'base_capital') setBaseCapital(Number(s.setting_value) || 0)
-          if (rawKey === 'initial_cash_riel') setInitCashRiel(Number(s.setting_value) || 0)
-          if (rawKey === 'initial_cash_usd') setInitCashUsd(Number(s.setting_value) || 0)
-          if (rawKey === 'initial_qr_riel') setInitQrRiel(Number(s.setting_value) || 0)
-          if (rawKey === 'initial_qr_usd') setInitQrUsd(Number(s.setting_value) || 0)
-          if (rawKey === 'personal_owe_riel') setPersOweRiel(Number(s.setting_value) || 0)
-          if (rawKey === 'personal_owe_usd') setPersOweUsd(Number(s.setting_value) || 0)
-          if (rawKey === 'family_owe_riel') setFamilyOweRiel(Number(s.setting_value) || 0)
-          if (rawKey === 'family_owe_usd') setFamilyOweUsd(Number(s.setting_value) || 0)
-        })
-      }
-      if (!silent) setIsLoading(false);
+    const buildQ = (table: string) => {
+      let q = supabase.from(table).select('*');
+      if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId);
+      return q;
+    }
+    
+    const buildQNarrow = (table: string, columns: string) => {
+      let q = supabase.from(table).select(columns);
+      if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId);
+      return q;
     }
 
-    loadData();
+    // 🔥 PHASE 4 PAYLOAD OPTIMIZATION: Narrowed columns slash RAM usage by 80%
+    // 🛡️ FINANCIAL FIX: Removed date limits from ledger tables so calculateAssets() computes accurate LIFETIME Cash, QR, and Net Worth. 
+    const [
+      {data: salesData}, {data: sumData}, {data: retData}, {data: expData}, 
+      {data: staffData}, {data: prodData}, {data: apData}, {data: cogsData}, 
+      {data: batchData}, {data: invPayData}
+    ] = await Promise.all([
+      buildQNarrow('sales', 'id, created_at, qty, price_per_bag, cogs_price, owner, custom_rice_type, rice_type, invoice_id').eq('is_voided', false),
+      buildQNarrow('invoice_summaries', 'invoice_id, owner, balance_due').eq('is_done', false),
+      buildQNarrow('retail_sales', 'id, created_at, qty, price_per_bag, cogs_price, owner, custom_rice_type, rice_type, transaction_id, payment_method, total_sales').eq('is_voided', false),
+      buildQNarrow('expenses', 'id, created_at, amount_riel, amount_usd, payment_method, spender, description, remarks'),
+      buildQ('staff'),
+      buildQNarrow('products', 'id, name, stock, cost_price, weight, linked_wholesale_id').order('id'),
+      buildQNarrow('accounts_payable', 'id, amount_riel, amount_usd, status').eq('status', 'Unpaid'),
+      buildQNarrow('cogs_settlements', 'payment_method, paid_amount_riel, paid_amount_usd, owner_name'),
+      buildQNarrow('inventory_batches', 'id, product_id, remaining_qty, cost_price, created_at').gt('remaining_qty', 0),
+      buildQNarrow('invoice_payments', 'invoice_id, payment_method, amount_paid_riel, amount_paid_usd, recorded_by, payment_date').eq('is_voided', false) 
+    ]);
+
+    setWholesaleSales(salesData || []); 
+    setInvoiceSummaries(sumData || []); 
+    setRetailSales(retData || []); 
+    setExpenses(expData || []); 
+    setStaffList(staffData || []); 
+    setInventoryList(prodData || []); 
+    setAccountsPayable(apData || []); 
+    setCogsSettlements(cogsData || []); 
+    setPriceHistory(batchData || []); 
+    setInvoicePayments(invPayData || []);
+
+    const baseKeys = ['base_capital', 'initial_cash_riel', 'initial_cash_usd', 'initial_qr_riel', 'initial_qr_usd', 'personal_owe_riel', 'personal_owe_usd', 'family_owe_riel', 'family_owe_usd'];
+    // 🔥 SECURITY FIX: Isolate app settings fetches by branch to prevent global cross-tenant data leaks
+    const keys = activeBranchId === 0 ? baseKeys : baseKeys.map(k => `${k}_${activeBranchId}`);
+    const { data: capData } = await supabase.from('app_settings').select('*').in('setting_key', keys)
     
-    // 🔥 UX/RELIABILITY FIX: Fetch silently on focus so the screen doesn't flash empty skeleton loaders
-    const onFocus = () => loadData(true);
-    window.addEventListener('focus', onFocus);
-    
-    return () => { 
-      window.removeEventListener('focus', onFocus); 
-    };
-  }, [activeBranchId])
+    // 💣 SECURITY WIPE: Force all manual accounting states to Zero. 
+    // Prevents Branch A's cash drawer from bleeding into Branch B if Branch B has no saved settings yet!
+    setBaseCapital(0); setInitCashRiel(0); setInitCashUsd(0); setInitQrRiel(0); setInitQrUsd(0); 
+    setPersOweRiel(0); setPersOweUsd(0); setFamilyOweRiel(0); setFamilyOweUsd(0);
+
+    if (capData) {
+      capData.forEach((s: any) => {
+        const rawKey = activeBranchId === 0 ? s.setting_key : s.setting_key.replace(`_${activeBranchId}`, '');
+        if (rawKey === 'base_capital') setBaseCapital(Number(s.setting_value) || 0)
+        if (rawKey === 'initial_cash_riel') setInitCashRiel(Number(s.setting_value) || 0)
+        if (rawKey === 'initial_cash_usd') setInitCashUsd(Number(s.setting_value) || 0)
+        if (rawKey === 'initial_qr_riel') setInitQrRiel(Number(s.setting_value) || 0)
+        if (rawKey === 'initial_qr_usd') setInitQrUsd(Number(s.setting_value) || 0)
+        if (rawKey === 'personal_owe_riel') setPersOweRiel(Number(s.setting_value) || 0)
+        if (rawKey === 'personal_owe_usd') setPersOweUsd(Number(s.setting_value) || 0)
+        if (rawKey === 'family_owe_riel') setFamilyOweRiel(Number(s.setting_value) || 0)
+        if (rawKey === 'family_owe_usd') setFamilyOweUsd(Number(s.setting_value) || 0)
+      })
+    }
+    if (!silent) setIsLoading(false);
+  }, [activeBranchId]);
+
+  useEffect(() => {
+    loadData(false);
+  }, [loadData]);
+
+  // 🔥 UX/RELIABILITY FIX: Replaced manual event listener with your custom hook!
+  useFocusRefresh(() => loadData(true));
 
   async function updateSetting(key: string, val: number) {
     // 🔥 SECURITY FIX: Append branch_id to settings key to isolate global table mutations per tenant

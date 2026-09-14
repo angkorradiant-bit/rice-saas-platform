@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useRouter } from 'next/navigation'
 import { useUserRole } from '@/lib/useUserRole'
@@ -66,19 +66,8 @@ export default function SettingsPage() {
   const [exchangeRate, setExchangeRate] = useState<number>(4000)
   const [isResetting, setIsResetting] = useState(false)
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setCurrentUser(user)
-    })
-    fetchProfiles()
-  }, [])
-
-  // 🔥 FIX: Dynamically refresh settings if the active branch changes
-  useEffect(() => {
-    fetchSettings()
-  }, [activeBranchId])
-
-  async function fetchSettings() {
+  // 🔥 CLOSURE FIX: Wrap in useCallback to dynamically track activeBranchId
+  const fetchSettings = useCallback(async () => {
     setLoading(true)
     const branchKey = activeBranchId === 0 ? 'exchange_rate' : `exchange_rate_${activeBranchId}`;
     const keys = [branchKey, 'exchange_rate'];
@@ -91,12 +80,29 @@ export default function SettingsPage() {
       if (setting) setExchangeRate(Number(setting.setting_value) || 4000)
     }
     setLoading(false)
-  }
+  }, [activeBranchId]);
 
-  async function fetchProfiles() {
-    const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: true })
+  // 🔒 SECURITY FIX: Isolate profile reads to the active branch!
+  const fetchProfiles = useCallback(async () => {
+    let q = supabase.from('profiles').select('*').order('created_at', { ascending: true });
+    if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId); // 🔥 DYNAMIC BRANCH FILTER
+    
+    const { data, error } = await q;
     if (data) setProfiles(data)
-  }
+  }, [activeBranchId]);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setCurrentUser(user)
+    })
+  }, [])
+
+  // 🔥 TRIGGER SECURE REFETCH: Updates everything when branch changes
+  useEffect(() => {
+    setProfiles([]); // 💣 SECURITY WIPE: Clear profiles instantly on branch switch
+    fetchProfiles()
+    fetchSettings()
+  }, [activeBranchId, fetchProfiles, fetchSettings])
 
   async function updateSetting(key: string, val: number) {
     // 🔥 SECURITY FIX: Isolate setting overrides to the active branch
@@ -110,7 +116,12 @@ export default function SettingsPage() {
     if (!confirm(`Are you sure you want to change this user's access level to ${newRole.toUpperCase() || 'NO ACCESS'}?`)) return;
 
     const roleValue = newRole === '' ? null : newRole;
-    const { error } = await supabase.from('profiles').update({ role: roleValue }).eq('id', profileId);
+    
+    // 🔒 SECURITY FIX: Enforce branch isolation on profile role updates
+    let updateQuery = supabase.from('profiles').update({ role: roleValue }).eq('id', profileId);
+    if (activeBranchId !== 0) updateQuery = updateQuery.eq('branch_id', activeBranchId);
+
+    const { error } = await updateQuery;
     
     if (error) {
       alert(`Error updating permissions: ${error.message}`);

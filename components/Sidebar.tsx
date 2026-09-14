@@ -156,19 +156,21 @@ export default function Sidebar() {
     };
   }, [isOpen]);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/')
-  }
+  // 🔥 SECURITY & CLOSURE FIX: Wipe branch memory on logout so the next user starts fresh
+  const handleLogout = React.useCallback(async () => {
+    localStorage.removeItem('pos_active_branch_id');
+    await supabase.auth.signOut();
+    router.push('/');
+  }, [router]);
 
   // 🔥 NEW DND-KIT SENSORS AND HANDLERS
   const sensors = useSensors(
-    // 🔥 distance: 5 means normal clicks work instantly, but dragging 5px initiates the drag!
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }), 
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const handleDragEnd = (event: any) => {
+  // 🔥 CLOSURE FIX: Wrap in useCallback to prevent continuous memory reallocation
+  const handleDragEnd = React.useCallback((event: any) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
       setMenuItems((items) => {
@@ -176,12 +178,11 @@ export default function Sidebar() {
         const newIndex = items.findIndex(i => i.label === over.id);
         const newOrder = arrayMove(items, oldIndex, newIndex);
         
-        // Save to localStorage immediately
         localStorage.setItem('sidebar_menu_order', JSON.stringify(newOrder.map(i => i.label)));
         return newOrder;
       });
     }
-  };
+  }, []);
 
   if (pathname === '/') return null;
 
@@ -384,7 +385,7 @@ export default function Sidebar() {
             position: sticky;
             top: 0;
             left: 0;
-            height: 100vh; 
+            height: 100dvh; /* 🔥 PWA FIX: Changed to dvh to perfectly match the pinned app body! */
           }
           .sidebar-backdrop {
             display: none;

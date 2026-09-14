@@ -1,3 +1,5 @@
+'use client' // 🔥 NEXT.JS FIX: Explicitly marks this hook as client-side logic
+
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 

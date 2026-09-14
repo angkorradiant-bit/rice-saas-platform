@@ -1,3 +1,5 @@
+'use client' // 🔥 NEXT.JS FIX: Explicitly marks this hook as client-side logic
+
 import { useState, useEffect } from 'react';
 
 export function useDebounce<T>(value: T, delay: number): T {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { formatRiel, formatUSD, formatNumber, EXCHANGE_RATE } from '@/utils/formatters'
@@ -104,52 +104,9 @@ export default function BizDatabase() {
     fetchSettings()
   }, [activeBranchId])
 
-  useEffect(() => { 
-    // 💣 SECURITY WIPE: Destroy any checked boxes immediately when switching branches 
-    // to prevent accidental cross-tenant deletions of overlapping database IDs!
-    setSelectedToDelete(new Set());
-    
-    fetchData(false)
-  }, [activeBranchId, timeFilter]) // 🔥 INFINITE FETCH FIX: Refetches instantly when date changes
-
-  useFocusRefresh(() => fetchData(true));
-
-  // --- DATABASE OPERATIONS ---
-  async function fetchSettings() {
-    const branchSuffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
-    const keys = [
-      `biz_col_widths${branchSuffix}`, `biz_sum_cols${branchSuffix}`, 
-      `biz_daily_cols${branchSuffix}`, `biz_retail_cols${branchSuffix}`, `biz_exp_cols${branchSuffix}`
-    ];
-    // Fallback to global keys for new branches
-    const fallbackKeys = ['biz_col_widths', 'biz_sum_cols', 'biz_daily_cols', 'biz_retail_cols', 'biz_exp_cols'];
-
-    const { data } = await supabase.from('app_settings').select('*').in('setting_key', [...keys, ...fallbackKeys]);
-    if (data) {
-      const getSetting = (key: string) => data.find(d => d.setting_key === `${key}${branchSuffix}`) || data.find(d => d.setting_key === key);
-
-      const widths = getSetting('biz_col_widths');
-      const sumCols = getSetting('biz_sum_cols');
-      const dalCols = getSetting('biz_daily_cols');
-      const retCols = getSetting('biz_retail_cols');
-      const expCols = getSetting('biz_exp_cols');
-      
-      if (widths?.setting_value) setColumnWidths(widths.setting_value)
-      if (sumCols?.setting_value) setSummaryCols(sumCols.setting_value)
-      if (dalCols?.setting_value) setDailyCols(dalCols.setting_value)
-      if (retCols?.setting_value) setRetailCols(retCols.setting_value)
-      
-      if (expCols?.setting_value) {
-        let cols = expCols.setting_value;
-        if (cols.includes('amount')) {
-          cols = cols.flatMap((c: string) => c === 'amount' ? ['amount_riel', 'amount_usd'] : c);
-        }
-        setExpenseCols(cols);
-      }
-    }
-  }
-
-  async function fetchData(isSilent = false) {
+  // 🔥 CLOSURE FIX: Wrap fetchData in useCallback so it always knows the exact activeBranchId
+  // even when called from an external window focus event!
+  const fetchData = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsLoading(true)
     
     let queryStart = null;
@@ -300,6 +257,49 @@ export default function BizDatabase() {
     unified.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     setTransactions(unified)
     setIsLoading(false)
+  }, [activeBranchId, timeFilter]);
+
+  useEffect(() => { 
+    // 💣 SECURITY WIPE: Destroy any checked boxes immediately when switching branches 
+    setSelectedToDelete(new Set());
+    fetchData(false)
+  }, [fetchData])
+
+  useFocusRefresh(() => fetchData(true));
+
+  // --- DATABASE OPERATIONS ---
+  async function fetchSettings() {
+    const branchSuffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
+    const keys = [
+      `biz_col_widths${branchSuffix}`, `biz_sum_cols${branchSuffix}`, 
+      `biz_daily_cols${branchSuffix}`, `biz_retail_cols${branchSuffix}`, `biz_exp_cols${branchSuffix}`
+    ];
+    // Fallback to global keys for new branches
+    const fallbackKeys = ['biz_col_widths', 'biz_sum_cols', 'biz_daily_cols', 'biz_retail_cols', 'biz_exp_cols'];
+
+    const { data } = await supabase.from('app_settings').select('*').in('setting_key', [...keys, ...fallbackKeys]);
+    if (data) {
+      const getSetting = (key: string) => data.find(d => d.setting_key === `${key}${branchSuffix}`) || data.find(d => d.setting_key === key);
+
+      const widths = getSetting('biz_col_widths');
+      const sumCols = getSetting('biz_sum_cols');
+      const dalCols = getSetting('biz_daily_cols');
+      const retCols = getSetting('biz_retail_cols');
+      const expCols = getSetting('biz_exp_cols');
+      
+      if (widths?.setting_value) setColumnWidths(widths.setting_value)
+      if (sumCols?.setting_value) setSummaryCols(sumCols.setting_value)
+      if (dalCols?.setting_value) setDailyCols(dalCols.setting_value)
+      if (retCols?.setting_value) setRetailCols(retCols.setting_value)
+      
+      if (expCols?.setting_value) {
+        let cols = expCols.setting_value;
+        if (cols.includes('amount')) {
+          cols = cols.flatMap((c: string) => c === 'amount' ? ['amount_riel', 'amount_usd'] : c);
+        }
+        setExpenseCols(cols);
+      }
+    }
   }
 
   // --- RAW BULK DELETE (100% ATOMIC & SECURE) ---
@@ -542,7 +542,7 @@ export default function BizDatabase() {
             </button>
           )}
           <button className="saas-btn saas-btn-secondary" onClick={() => fetchData(false)}>
-            {isLoading ? '🔄 Loading...' : '🔄 Refresh Data'}
+            {isLoading ? 'Loading...' : 'Refresh Data'}
           </button>
         </div>
       </div>

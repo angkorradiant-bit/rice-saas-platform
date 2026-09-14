@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom' // 👈 🔥 ADD THIS LINE!
 import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
@@ -340,6 +340,22 @@ export default function RiceControl() {
     setIsAddModalOpen(true);
   };
 
+  // 🔥 CLOSURE FIX: Wrap in useCallback so useFocusRefresh safely binds to the active branch
+  const loadAllData = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsLoading(true);
+    await Promise.all([
+      fetchProducts(),
+      fetchSettings(),
+      fetchSuppliers(),
+      fetchImports(),
+      fetchBatches()
+    ]);
+    if (!isSilent) setIsLoading(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
+
+  useFocusRefresh(() => loadAllData(true));
+
   useEffect(() => { 
     // 💣 SECURITY WIPE: Destroy all active edits, selections, import forms, 
     // and modals when switching branches to prevent Cross-Tenant Data Corruption!
@@ -369,18 +385,7 @@ export default function RiceControl() {
     setEditingHistoryId(null);
     setHistoryEdits({});
 
-    async function init() {
-      setIsLoading(true);
-      await Promise.all([
-        fetchProducts(),
-        fetchSettings(),
-        fetchSuppliers(),
-        fetchImports(),
-        fetchBatches()
-      ]);
-      setIsLoading(false);
-    }
-    init();
+    loadAllData(false);
 
     // 🛡️ INTEGRATION FIX: Listen to POS sales in real-time so the Inventory screen is never stale
     // 🔥 UNIQUE CHANNELS: Append activeBranchId so websocket doesn't choke during branch switch
@@ -396,7 +401,7 @@ export default function RiceControl() {
       supabase.removeChannel(invProductsChannel);
       supabase.removeChannel(invBatchesChannel);
     }
-  }, [activeBranchId]) // 🔥 CRITICAL: RE-RUNS ON BRANCH SWITCH (Handles branch change completely on its own)
+  }, [activeBranchId, loadAllData]) // 🔥 CRITICAL: RE-RUNS ON BRANCH SWITCH
 
   const handleManualPull = async (retailId: number, wholesaleId: number) => {
     const wholesaleProduct = products.find(p => p.id === wholesaleId);
@@ -410,19 +415,18 @@ export default function RiceControl() {
       const { error } = await supabase.rpc('pull_wholesale_bags', {
          p_retail_id: retailId,
          p_wholesale_id: wholesaleId,
-         p_bags_needed: 1
+         p_bags_needed: 1,
+         p_branch_id: activeBranchId // 🔒 SECURITY FIX: Stamped RPC
       });
 
-     if (error) throw new Error(error.message);
+      if (error) throw new Error(error.message);
       showToast('success', 'Bags Pulled', 'Wholesale stock converted to retail successfully.');
 
       const newWholesaleStock = Number(wholesaleProduct.stock) - 1;
       triggerStockAlert(wholesaleProduct.name || 'Unknown', newWholesaleStock, Number(wholesaleProduct.min_stock_level) || 0);
 
-      // 🔥 Await fetches so the UI updates smoothly before unlocking
       await fetchProducts();
       await fetchBatches();
-
     } catch (err: any) {
       showToast('error', 'Error', err.message);
     } finally {
@@ -449,7 +453,8 @@ export default function RiceControl() {
         const { error } = await supabase.rpc('execute_repack', {
             p_retail_id: retailId,
             p_wholesale_id: wholesaleId,
-            p_cogs: Number(freshWholesale.cost_price) || 0
+            p_cogs: Number(freshWholesale.cost_price) || 0,
+            p_branch_id: activeBranchId // 🔒 SECURITY FIX: Stamped RPC
         });
 
         if (error) throw new Error(error.message);
@@ -469,10 +474,8 @@ export default function RiceControl() {
         const newRetailStock = Number(repackModal.product!.stock) - wWeight;
         triggerStockAlert(repackModal.product?.name || 'Unknown', newRetailStock, Number(repackModal.product?.min_stock_level) || 0);
 
-        // 🔥 Await fetches so the UI updates smoothly before unlocking
         await fetchProducts();
         await fetchBatches();
-
     } catch (err: any) {
         showToast('error', 'Repack Error', err.message);
     } finally {
@@ -618,14 +621,16 @@ export default function RiceControl() {
     if (edits.remaining_qty !== undefined) payload.remaining_qty = newQty;
     if (edits.cost_price !== undefined) payload.cost_price = Number(edits.cost_price) || 0;
 
-    const { error } = await supabase.from('inventory_batches').update(payload).eq('id', batchId);
+    // 🔒 SECURITY FIX: Enforce branch isolation on batch update
+    const { error } = await supabase.from('inventory_batches').update(payload).eq('id', batchId).eq('branch_id', activeBranchId);
     
     if (!error) {
       if (qtyDifference !== 0) {
-        // ✅ FIX: Use atomic RPC when editing historical batch quantities
+        // 🔒 SECURITY FIX: Enforce branch isolation on RPC stock adjustment
         await supabase.rpc('adjust_product_stock', { 
           p_product_id: targetProduct.id, 
-          p_quantity: qtyDifference 
+          p_quantity: qtyDifference,
+          p_branch_id: activeBranchId
         });
         
         const newStock = Number(targetProduct.stock) + qtyDifference;
@@ -659,14 +664,16 @@ export default function RiceControl() {
     
     const qtyToReverse = Number(originalBatch.remaining_qty) || 0;
 
-    const { error } = await supabase.from('inventory_batches').delete().eq('id', batchId);
+    // 🔒 SECURITY FIX: Enforce branch isolation on batch deletion
+    const { error } = await supabase.from('inventory_batches').delete().eq('id', batchId).eq('branch_id', activeBranchId);
     
     if (!error) {
       if (qtyToReverse > 0) {
-        // ✅ FIX: Use atomic RPC when deleting a batch to deduct from master stock safely
+        // 🔒 SECURITY FIX: Enforce branch isolation on RPC stock adjustment
         await supabase.rpc('adjust_product_stock', { 
           p_product_id: targetProduct.id, 
-          p_quantity: -Math.abs(qtyToReverse) 
+          p_quantity: -Math.abs(qtyToReverse),
+          p_branch_id: activeBranchId
         });
         
         const newStock = Number(targetProduct.stock) - qtyToReverse;
@@ -699,10 +706,11 @@ export default function RiceControl() {
 
       const targetProduct = products.find(p => p.id === impData.product_id);
       if (targetProduct) {
-        // ✅ FIX: Use atomic RPC instead of client-side math for voiding
+        // 🔒 SECURITY FIX: Enforce branch isolation on RPC stock adjustment
         await supabase.rpc('adjust_product_stock', { 
           p_product_id: targetProduct.id, 
-          p_quantity: -Math.abs(Number(impData.qty)) 
+          p_quantity: -Math.abs(Number(impData.qty)),
+          p_branch_id: activeBranchId 
         });
       }
 
@@ -715,7 +723,8 @@ export default function RiceControl() {
         .limit(1);
       
       if (batches && batches.length > 0) {
-        await supabase.from('inventory_batches').delete().eq('id', batches[0].id);
+        // 🔒 SECURITY FIX: Enforce branch isolation on batch deletion
+        await supabase.from('inventory_batches').delete().eq('id', batches[0].id).eq('branch_id', activeBranchId);
       }
 
       const { data: supData } = await supabase.from('suppliers').select('name, total_owed_riel').eq('id', impData.supplier_id).single();
@@ -724,13 +733,16 @@ export default function RiceControl() {
       const debtAdded = Number(impData.total_cost) - Number(impData.paid_amount);
       if (debtAdded > 0) {
         if (supData) {
-          await supabase.from('suppliers').update({ total_owed_riel: Math.max(0, Number(supData.total_owed_riel) - debtAdded) }).eq('id', impData.supplier_id);
+          // 🔒 SECURITY FIX: Enforce branch isolation on supplier update
+          await supabase.from('suppliers').update({ total_owed_riel: Math.max(0, Number(supData.total_owed_riel) - debtAdded) }).eq('id', impData.supplier_id).eq('branch_id', activeBranchId);
         }
+        // 🔒 SECURITY FIX: Enforce branch isolation on AP deletion
         await supabase.from('accounts_payable')
           .delete()
           .eq('supplier_name', supplierName)
           .eq('notes', `Stock Import: ${impData.qty} bags`)
-          .eq('status', 'Unpaid');
+          .eq('status', 'Unpaid')
+          .eq('branch_id', activeBranchId);
       }
 
       if (Number(impData.paid_amount) > 0) {
@@ -742,7 +754,8 @@ export default function RiceControl() {
           .limit(1);
           
         if (exps && exps.length > 0) {
-          await supabase.from('expenses').delete().eq('id', exps[0].id);
+          // 🔒 SECURITY FIX: Enforce branch isolation on expense deletion
+          await supabase.from('expenses').delete().eq('id', exps[0].id).eq('branch_id', activeBranchId);
         }
       }
       // 🔥 SECURITY FIX: Isolate import deletion
@@ -966,7 +979,8 @@ export default function RiceControl() {
         }
 
         if (updateBatch) {
-           await supabase.from('inventory_batches').update(batchPayload).eq('id', currentBatch.id);
+           // 🔒 SECURITY FIX: Enforce branch isolation on batch update
+           await supabase.from('inventory_batches').update(batchPayload).eq('id', currentBatch.id).eq('branch_id', activeBranchId);
         }
       }
     }
@@ -1097,9 +1111,10 @@ export default function RiceControl() {
   }
 
   const handleLinkWholesaleBag = async (retailId: number, wholesaleProduct: Product | null) => {
+    // 🔒 SECURITY FIX: Enforce branch isolation on product updates
     const { error } = await supabase.from('products').update({ 
       linked_wholesale_id: wholesaleProduct ? wholesaleProduct.id : null,
-    }).eq('id', retailId);
+    }).eq('id', retailId).eq('branch_id', activeBranchId);
     
     if (!error) {
       setActiveDropdownId(null);

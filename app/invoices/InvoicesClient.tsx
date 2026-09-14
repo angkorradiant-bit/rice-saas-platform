@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { useToast } from '@/components/ToastProvider'
@@ -56,21 +56,8 @@ export default function InvoiceGallery() {
     }
   }, []); // Empty array ensures this only overwrites the default ONCE when opening the page.
 
-  useEffect(() => {
-    // 💣 SECURITY WIPE: Destroy active checkbox selections when switching branches 
-    // or tabs to prevent accidentally deleting image files from the wrong tenant!
-    setSelectedInvoices(new Set());
-
-    setMounted(true);
-    const isMobile = window.innerWidth < 1024 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    setIsDeviceMobile(isMobile);
-    fetchInvoices();
-  }, [filterTab, categoryTab, voidSubTab, activeBranchId]) // 🔥 RE-RUNS ON BRANCH SWITCH
-
-  // 🚀 Window Focus Auto-Refresh
-  useFocusRefresh(fetchInvoices);
-
-  async function fetchInvoices() {
+  // 🔥 CLOSURE FIX: Wrap fetchInvoices in useCallback to dynamically bind activeBranchId
+  const fetchInvoices = useCallback(async () => {
     setIsLoading(true)
     const now = new Date()
 
@@ -171,7 +158,22 @@ export default function InvoiceGallery() {
     const allCombined = [...wholesaleInvoices, ...Object.values(retailGrouped)];
     setInvoices(allCombined);
     setIsLoading(false);
-  }
+  }, [activeBranchId, filterTab]); 
+
+  useEffect(() => {
+    // 💣 SECURITY WIPE: Destroy active checkbox selections when switching branches 
+    // or tabs to prevent accidentally deleting image files from the wrong tenant!
+    setSelectedInvoices(new Set());
+
+    setMounted(true);
+    const isMobile = window.innerWidth < 1024 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    setIsDeviceMobile(isMobile);
+    
+    fetchInvoices();
+  }, [fetchInvoices, categoryTab, voidSubTab]) // 🔥 Safely triggers on branch swap via fetchInvoices binding
+
+  // 🚀 Window Focus Auto-Refresh securely locked
+  useFocusRefresh(fetchInvoices);
 
   // --- 🔥 BULLETPROOF VOID AUTOMATION (ATOMIC RPC) ---
   const handleVoidInvoice = async (invoiceId: string) => {

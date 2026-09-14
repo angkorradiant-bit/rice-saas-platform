@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { Product, InventoryBatch } from '@/types'
 import { formatRiel } from '@/utils/formatters'
 import { CurrencyInput } from '@/components/Inputs'
@@ -75,6 +76,14 @@ const [newMixName, setNewMixName] = useState('')
 const [newMixPrice, setNewMixPrice] = useState<number | string>(0)
 const [newMixType, setNewMixType] = useState<'wholesale' | 'half' | 'retail'>('wholesale')
 
+// 🔥 CLOSURE FIX: Wrap all fetchers in useCallback so they always have the correct branch ID
+  const loadAllData = useCallback(() => {
+    fetchProducts();
+    fetchBatches();
+    fetchHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
+
 useEffect(() => {
     // 💣 SECURITY WIPE: Destroy ghost form data and active edits when switching 
     // branches to prevent injecting Branch A's product IDs into Branch B's database!
@@ -82,10 +91,11 @@ useEffect(() => {
     setEditingHistoryId(null);
     setHistoryEdits({});
     
-    fetchProducts();
-    fetchBatches();
-    fetchHistory();
-  }, [activeBranchId])
+    loadAllData();
+  }, [loadAllData])
+
+// 🚀 OPTIMIZATION: Auto-refresh stock levels when user switches back to this browser tab!
+useFocusRefresh(() => loadAllData());
 
 const rice1 = products.find(p => p.id.toString() === rice1Id)
 const rice2 = products.find(p => p.id.toString() === rice2Id)
@@ -427,10 +437,19 @@ const yieldDiff = cleanYieldKg - (Number(record.yieldKg) || 0);
 
 // Update Target Product Stock Master
 if (yieldDiff !== 0) {
-await supabase.rpc('adjust_product_stock', { p_product_id: record.targetProductId, p_quantity: yieldDiff });
+// 🔒 SECURITY FIX: Enforce branch isolation on RPC stock adjustments
+await supabase.rpc('adjust_product_stock', { 
+  p_product_id: record.targetProductId, 
+  p_quantity: yieldDiff,
+  p_branch_id: activeBranchId 
+});
 
 // 🔥 RELIABILITY FIX: Use atomic RPC to prevent read-modify-write race conditions on batch inventory
-await supabase.rpc('adjust_batch_stock', { p_batch_id: record.targetBatchId, p_quantity: yieldDiff });
+await supabase.rpc('adjust_batch_stock', { 
+  p_batch_id: record.targetBatchId, 
+  p_quantity: yieldDiff,
+  p_branch_id: activeBranchId 
+});
 }
 
 // Update Batch Record Cost Price Only

@@ -288,9 +288,57 @@ html, body {
   overflow-y: auto;
   overflow-x: hidden !important;
   -webkit-overflow-scrolling: touch;
-  width: 100vw;
+  width: 100%; /* 🔥 FIX: Changed from 100vw to prevent horizontal scrollbar collision on desktop */
   max-width: 100%;
 }
 @media (max-width: 1023px) {
   .main-wrapper { padding: max(20px, env(safe-area-inset-top, 20px)) 16px 16px 16px !important; }
+}
+
+/* --- 9. UNIVERSAL UTILITY CLASSES --- */
+
+/* 🔥 Hide Scrollbars but Keep Scrolling Functionality */
+.hide-scrollbar::-webkit-scrollbar { 
+  display: none !important; 
+}
+.hide-scrollbar { 
+  -ms-overflow-style: none !important; 
+  scrollbar-width: none !important; 
+}
+
+/* 🔥 Remove Arrows/Spinners from Number Inputs */
+input[type="number"].no-spinners::-webkit-inner-spin-button,
+input[type="number"].no-spinners::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"].no-spinners {
+  -moz-appearance: textfield;
+  appearance: textfield; /* 🔥 Added the standard property to satisfy VS Code */
+}
+
+/* 🔥 Universal Responsive Display Toggles */
+.hide-on-mobile { display: inline-block; }
+.show-on-mobile { display: none; }
+.desktop-only-flex { display: flex; }
+.mobile-only-flex { display: none; }
+.desktop-only-btn { display: block; }
+.mobile-only-btn { display: none !important; }
+
+@media (max-width: 1023px) {
+  .hide-on-mobile { display: none !important; }
+  .show-on-mobile { display: inline-block !important; }
+  .desktop-only-flex { display: none !important; }
+  .mobile-only-flex { display: flex !important; }
+  .desktop-only-btn { display: none !important; }
+  .mobile-only-btn { display: flex !important; }
+}
+
+/* 🔥 Universal Fade-in Animation for Modals & Tabs */
+.fade-in { 
+  animation: fadeIn 0.3s ease-in-out; 
+}
+@keyframes fadeIn { 
+  from { opacity: 0; transform: translateY(5px); } 
+  to { opacity: 1; transform: translateY(0); } 
 }
