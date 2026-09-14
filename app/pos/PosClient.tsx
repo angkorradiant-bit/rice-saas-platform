@@ -301,7 +301,15 @@ export default function POSPage() {
   
   // 🟢 ADDED: CREATE NEW PRODUCT STATE
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [newItem, setNewItem] = useState({ name: '', price: 0 as any, cost_price: 0 as any, weight: 50 as any, stock: 0 as any, min_stock_level: 10 as any });
+  // 🔥 FIX: Added 'linked_wholesale_id' to state!
+  const [newItem, setNewItem] = useState({ name: '', price: 0 as any, cost_price: 0 as any, weight: 50 as any, stock: 0 as any, min_stock_level: 10 as any, linked_wholesale_id: '' as any });
+
+  // 🔥 NEW: Link Bag Search Portal States
+  const [isLinkBagModalOpen, setIsLinkBagModalOpen] = useState(false);
+  const [linkBagSearch, setLinkBagSearch] = useState('');
+
+  // 🔥 ADDED: RETAIL SORT STATE
+  const [retailPriceSort, setRetailPriceSort] = useState<'none' | 'asc' | 'desc'>('none');
 
   // 🟢 NEW: MIX RICE STATES
   const [rice1Id, setRice1Id] = useState<string>('');
@@ -412,6 +420,10 @@ export default function POSPage() {
         
         const savedTab = localStorage.getItem('pos_tab');
         if (savedTab) setActiveTab(savedTab as 'retail' | 'wholesale');
+
+        // 🔥 ADDED: Load saved sort preference
+        const savedSort = localStorage.getItem('pos_retail_price_sort');
+        if (savedSort) setRetailPriceSort(savedSort as any);
       }
     } catch (e) { console.error('Error loading POS state', e) }
   }, []);
@@ -762,7 +774,8 @@ export default function POSPage() {
       // 🔥 UI FIX: Make weight blank for Wholesale so you are forced to type 10, 25, or 50!
       weight: (activeTab === 'retail' && activeFullScreen === 'none') ? 1 : ('' as any), 
       stock: '' as any, 
-      min_stock_level: 10 as any 
+      min_stock_level: 10 as any,
+      linked_wholesale_id: '' as any // 🔥 FIX: TypeScript needs this to match the state shape!
     });
     setIsAddModalOpen(true);
   };
@@ -796,6 +809,7 @@ export default function POSPage() {
         weight: Number(newItem.weight) || 50,
         stock: Number(newItem.stock) || 0,
         min_stock_level: Number(newItem.min_stock_level) || 10,
+        linked_wholesale_id: newItem.linked_wholesale_id ? Number(newItem.linked_wholesale_id) : null, // 🔥 ADDED WHOLESALE LINK
         mtd_kg_used: 0,
         mtd_bags_used: 0,
         branch_id: activeBranchId 
@@ -804,7 +818,7 @@ export default function POSPage() {
       
       if (!error && data && data.length > 0) {
         setIsAddModalOpen(false);
-        setNewItem({ name: '', price: 0, cost_price: 0, weight: 50, stock: 0, min_stock_level: 10 });
+        setNewItem({ name: '', price: 0 as any, cost_price: 0 as any, weight: 50 as any, stock: 0 as any, min_stock_level: 10 as any, linked_wholesale_id: '' as any }); // 🔥 FIX: Added linked_wholesale_id here too
         setProducts(prev => [...prev, data[0]]);
         setImportForm(prev => ({ ...prev, product_id: String(data[0].id) }));
         showToast('success', 'Product Created', 'Ready to receive stock.');
@@ -1090,9 +1104,8 @@ export default function POSPage() {
     const finalPrice = typeof mobilePrice === 'number' ? mobilePrice : (parseFloat(String(mobilePrice).replace(/,/g, '')) || 0);
     
     const defaultPrice = activeTab === 'wholesale' ? 0 : Number(selectedMobileProduct.price || 0);
-    if (!isForced && finalQty === 1 && finalPrice === defaultPrice) {
-      if (!window.confirm(`🛒 Add Confirmation\n\nYou are adding 1x [${mobileName}] for ${formatRiel(finalPrice)}.\n\nClick [OK] to confirm, or [Cancel] to change the amount.`)) return;
-    }
+    
+    // 🔥 FIX: Completely removed the annoying "1x" confirmation popup here so adding is instant!
 
     if (!isForced && (finalQty <= 0 || mobileQty === '')) {
       if (!window.confirm('🛑 Missing Quantity\n\nPlease enter a quantity greater than 0.\n\nClick [OK] to add to cart anyway, or [Cancel] to recheck.')) return;
@@ -2051,15 +2064,26 @@ export default function POSPage() {
     return true;
   });
 
-  // 🔥 SORT BY COGS: Highest cost rice at top, lowest at bottom
-  filteredProducts.sort((a, b) => {
-    const cogsA = Number(activeBatches[a.id]?.[0]?.cost_price || a.cost_price || 0);
-    const cogsB = Number(activeBatches[b.id]?.[0]?.cost_price || b.cost_price || 0);
-    return cogsB - cogsA;
-  });
+  // 🔥 SORT BY COGS: Highest cost rice at top, lowest at bottom (FOR WHOLESALE)
+  if (activeTab === 'wholesale') {
+    filteredProducts.sort((a, b) => {
+      const cogsA = Number(activeBatches[a.id]?.[0]?.cost_price || a.cost_price || 0);
+      const cogsB = Number(activeBatches[b.id]?.[0]?.cost_price || b.cost_price || 0);
+      return cogsB - cogsA;
+    });
 
-  if (activeCategory === '🔥 Hot' && activeTab === 'wholesale') {
-    filteredProducts.sort((a, b) => (mtdSalesStats[b.id] || 0) - (mtdSalesStats[a.id] || 0));
+    if (activeCategory === '🔥 Hot') {
+      filteredProducts.sort((a, b) => (mtdSalesStats[b.id] || 0) - (mtdSalesStats[a.id] || 0));
+    }
+  }
+
+  // 🔥 NEW: SORT RETAIL PRICE BASED ON STATE
+  if (activeTab === 'retail' && retailPriceSort !== 'none') {
+    filteredProducts.sort((a, b) => {
+      const priceA = Number(a.price || 0);
+      const priceB = Number(b.price || 0);
+      return retailPriceSort === 'asc' ? priceA - priceB : priceB - priceA;
+    });
   }
 
   const filteredCustomers = customers.filter(c => 
@@ -2253,64 +2277,106 @@ export default function POSPage() {
               </div>
 
               {activeTab === 'retail' && (
-                <div className="saas-tab-container hide-scrollbar" style={{ flexWrap: 'nowrap', overflowX: 'auto', marginBottom: '0px', background: '#f1f5f9', border: 'none', boxShadow: 'none' }}>
+                <div className="hide-scrollbar" style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px', alignItems: 'center', overflowX: 'auto', width: '100%', paddingBottom: '4px' }}>
+                  <div className="saas-tab-container hide-scrollbar" style={{ flexWrap: 'nowrap', overflowX: 'auto', marginBottom: '0px', background: '#f1f5f9', border: 'none', boxShadow: 'none', flexShrink: 0 }}>
+                    <button 
+                      onClick={() => setRetailSubTab('active')} 
+                      onDragOver={(e) => e.preventDefault()} 
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const pid = Number(e.dataTransfer.getData('product_id'));
+                        if (pid) toggleProductActiveStatus(pid, 'active');
+                      }}
+                      className={`saas-tab ${retailSubTab === 'active' ? 'active' : ''}`}
+                      style={{ minWidth: 'max-content' }}
+                    >
+                      Active ({products.filter(p => parseFloat(String(p.weight)) < 50 && !hiddenRetailIds.includes(p.id)).length})
+                    </button>
+                    
+                    <button 
+                      onClick={() => setRetailSubTab('inactive')} 
+                      onDragOver={(e) => e.preventDefault()} 
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const pid = Number(e.dataTransfer.getData('product_id'));
+                        if (pid) toggleProductActiveStatus(pid, 'inactive');
+                      }}
+                      className={`saas-tab ${retailSubTab === 'inactive' ? 'active' : ''}`}
+                      style={retailSubTab === 'inactive' ? { background: '#ef4444', color: '#fff', minWidth: 'max-content' } : { minWidth: 'max-content' }}
+                    >
+                      Non-Active ({products.filter(p => parseFloat(String(p.weight)) < 50 && hiddenRetailIds.includes(p.id)).length})
+                    </button>
+                  </div>
+                  
+                  {/* 🟢 NEW RETAIL BUTTONS (COMPACT 1-ROW DESIGN) */}
                   <button 
-                    onClick={() => setRetailSubTab('active')} 
-                    onDragOver={(e) => e.preventDefault()} 
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const pid = Number(e.dataTransfer.getData('product_id'));
-                      if (pid) toggleProductActiveStatus(pid, 'active');
+                    onClick={() => {
+                        setNewItem({ name: '', price: '' as any, cost_price: '' as any, weight: 1, stock: '' as any, min_stock_level: 10, linked_wholesale_id: '' as any });
+                        setIsAddModalOpen(true);
+                    }} 
+                    className="saas-btn" 
+                    style={{ 
+                      flexShrink: 0, 
+                      background: '#10b981', 
+                      color: '#fff', 
+                      width: isDeviceMobile ? '40px' : 'auto',
+                      height: '40px',
+                      padding: isDeviceMobile ? '0' : '0 16px', 
+                      borderRadius: '8px', 
+                      fontWeight: 'bold', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      gap: '6px', 
+                      border: 'none', 
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.05)', 
+                      cursor: 'pointer' 
                     }}
-                    className={`saas-tab ${retailSubTab === 'active' ? 'active' : ''}`}
-                    style={{ minWidth: 'max-content' }}
                   >
-                    Active ({products.filter(p => parseFloat(String(p.weight)) < 50 && !hiddenRetailIds.includes(p.id)).length})
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    {!isDeviceMobile && <span>Add New</span>}
                   </button>
                   
                   <button 
-                    onClick={() => setRetailSubTab('inactive')} 
-                    onDragOver={(e) => e.preventDefault()} 
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const pid = Number(e.dataTransfer.getData('product_id'));
-                      if (pid) toggleProductActiveStatus(pid, 'inactive');
+                    onClick={() => {
+                        const next = retailPriceSort === 'none' ? 'desc' : retailPriceSort === 'desc' ? 'asc' : 'none';
+                        setRetailPriceSort(next);
+                        localStorage.setItem('pos_retail_price_sort', next);
+                    }} 
+                    className="saas-btn saas-btn-secondary" 
+                    style={{ 
+                      flexShrink: 0, 
+                      color: retailPriceSort !== 'none' ? '#3b82f6' : '#0f172a', 
+                      width: isDeviceMobile ? '40px' : 'auto',
+                      height: '40px',
+                      padding: isDeviceMobile ? '0' : '0 16px', 
+                      borderRadius: '8px', 
+                      fontWeight: 'bold', 
+                      fontSize: '13px', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      gap: '6px', 
+                      cursor: 'pointer'
                     }}
-                    className={`saas-tab ${retailSubTab === 'inactive' ? 'active' : ''}`}
-                    style={retailSubTab === 'inactive' ? { background: '#ef4444', color: '#fff', minWidth: 'max-content' } : { minWidth: 'max-content' }}
                   >
-                    Non-Active ({products.filter(p => parseFloat(String(p.weight)) < 50 && hiddenRetailIds.includes(p.id)).length})
+                    {/* Clean Funnel Filter Icon matching Inventory Page */}
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+                    
+                    {/* Tiny visual indicator so you still know which way it's sorting */}
+                    {retailPriceSort === 'desc' && <span style={{ marginLeft: isDeviceMobile ? '0' : '4px', fontSize: '12px' }}>↓</span>}
+                    {retailPriceSort === 'asc' && <span style={{ marginLeft: isDeviceMobile ? '0' : '4px', fontSize: '12px' }}>↑</span>}
+
+                    {!isDeviceMobile && <span>Sort Price</span>}
                   </button>
                 </div>
               )}
             </div>
 
-            {/* 🟢 SEARCH AND CATEGORY TABS MOVED INSIDE STICKY HEADER */}
-            {/* 🔥 FIX: Added minWidth: 0 to lock the flex wrapper to the physical screen width */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', minWidth: 0 }}>
               
-              {/* 🔥 NEW: Side-by-side search bars by removing wrap and dropping minWidth to 0 */}
               <div style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px', alignItems: 'flex-start', width: '100%' }}>
-                
-                {/* PRODUCT SEARCH */}
-                <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: '16px', zIndex: 2 }}>🔍</span>
-                  <input 
-                    type="text" 
-                    placeholder={currentT.searchPlaceholder.replace('🔍 ', '').replace('🔍', '').trim()} 
-                    value={searchQuery} 
-                    onChange={(e) => setSearchQuery(e.target.value)} 
-                    className="saas-input"
-                    style={{ paddingLeft: '38px', paddingRight: searchQuery ? '38px' : '14px', width: '100%', fontSize: isDeviceMobile ? '15px' : '14px', height: '42px', boxSizing: 'border-box' }} 
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '16px', zIndex: 2, padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      title="Clear search"
-                    >✕</button>
-                  )}
-                </div>
+                {/* ❌ REMOVED PRODUCT SEARCH INPUT HERE */}
                 
                 {/* CUSTOMER SEARCH */}
                 {activeTab === 'wholesale' && (
@@ -4579,6 +4645,90 @@ export default function POSPage() {
                   <input type="number" className="saas-input no-spinners" value={newItem.stock} onChange={e => setNewItem({...newItem, stock: e.target.value})} style={{width:'100%'}}/>
                 </div>
               </div>
+              
+              {/* 🔥 UPGRADED: Link Wholesale Bag Search Portal (Only visible on Retail Tab) */}
+              {activeTab === 'retail' && activeFullScreen === 'none' && (() => {
+                const linkedProd = newItem.linked_wholesale_id ? products.find(p => String(p.id) === String(newItem.linked_wholesale_id)) : null;
+                const availableBags = products.filter(p => Number(p.weight) > 1 && (!linkBagSearch || p.name.toLowerCase().includes(linkBagSearch.toLowerCase())));
+
+                return (
+                  <div style={{ marginBottom: '8px', position: 'relative' }}>
+                    <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', margin: '0 0 6px 0' }}>🔗 Link Wholesale Bag (Optional)</label>
+                    
+                    {/* Trigger Button */}
+                    <div 
+                      className="interactive-select-trigger" 
+                      onClick={() => { setIsLinkBagModalOpen(true); setLinkBagSearch(''); }} 
+                      style={{ width: '100%', background: '#fff', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '42px', boxSizing: 'border-box' }}
+                    >
+                      <span style={{ color: linkedProd ? '#0f172a' : '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {linkedProd ? `🌾 ${linkedProd.name}` : '🔍 Search & Link Wholesale Bag...'}
+                      </span>
+                      <span style={{ fontSize: '12px', color: '#64748b', flexShrink: 0, marginLeft: '8px' }}>▼</span>
+                    </div>
+
+                    {/* 🔥 FULL-SCREEN PORTAL FOR BAG SEARCH */}
+                    {isLinkBagModalOpen && typeof document !== 'undefined' && createPortal(
+                      <div 
+                        style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', zIndex: 2147483647, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: 'max(16px, env(safe-area-inset-top, 16px)) 16px 16px 16px', backdropFilter: 'blur(2px)' }} 
+                        onMouseDown={() => { setIsLinkBagModalOpen(false); setLinkBagSearch(''); }}
+                      >
+                        <div 
+                          onMouseDown={(e) => e.stopPropagation()}
+                          style={{ backgroundColor: '#f8fafc', borderRadius: '12px', width: '100%', maxWidth: '500px', maxHeight: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'posPopupSlideDown 0.2s ease-out' }}
+                        >
+                          {/* Search Header */}
+                          <div style={{ display: 'flex', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e2e8f0', gap: '8px', backgroundColor: '#ffffff', flexShrink: 0 }}>
+                            <div style={{ position: 'relative', flex: 1 }}>
+                              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: '16px' }}>🔍</span>
+                              <input 
+                                autoFocus
+                                type="text"
+                                placeholder="Search Wholesale bag..."
+                                value={linkBagSearch}
+                                onChange={e => setLinkBagSearch(e.target.value)}
+                                style={{ width: '100%', padding: '10px 12px 10px 36px', fontSize: '14px', border: '1px solid #3b82f6', borderRadius: '6px', outline: 'none', color: '#0f172a', boxSizing: 'border-box' }}
+                              />
+                            </div>
+                            <button onClick={(e) => { e.preventDefault(); setIsLinkBagModalOpen(false); setLinkBagSearch(''); }} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '24px', cursor: 'pointer', padding: '0 4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              ✕
+                            </button>
+                          </div>
+                          
+                          {/* Results List */}
+                          <div className="hide-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '16px', backgroundColor: '#f8fafc' }}>
+                            <button 
+                              onClick={(e) => { e.preventDefault(); setNewItem({...newItem, linked_wholesale_id: '' as any}); setIsLinkBagModalOpen(false); }} 
+                              className="saas-btn" 
+                              style={{ width: '100%', padding: '12px', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px dashed #fca5a5', borderRadius: '8px', cursor: 'pointer', fontWeight: 500, fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}
+                            >
+                              ❌ Clear Linked Bag
+                            </button>
+
+                            {availableBags.length === 0 ? (
+                              <div style={{ textAlign: 'center', padding: '16px', color: '#94a3b8', fontSize: '14px' }}>No bags found</div>
+                            ) : (
+                              <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
+                                {availableBags.map((wp, index, arr) => (
+                                  <div 
+                                    key={wp.id} 
+                                    onClick={(e) => { e.preventDefault(); setNewItem({...newItem, linked_wholesale_id: wp.id}); setIsLinkBagModalOpen(false); }} 
+                                    style={{ padding: '12px 16px', cursor: 'pointer', backgroundColor: '#ffffff', borderBottom: index === arr.length - 1 ? 'none' : '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                                  >
+                                    <span style={{ fontWeight: 500, fontSize: '14px', color: '#0f172a' }}>{wp.name}</span>
+                                    <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold' }}>Stock: {wp.stock} | <span style={{ fontWeight: 'normal' }}>{formatRiel(Number(wp.cost_price))} ៛</span></span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>,
+                      document.body
+                    )}
+                  </div>
+                );
+              })()}
               
               <div style={{ background: '#fef2f2', padding: '16px', borderRadius: '8px', border: '1px solid #fecaca' }}>
                 <label style={{ display: 'block', fontSize: '11px', color: '#991b1b', fontWeight: 'bold', marginBottom: '6px', textTransform: 'uppercase' }}>🚨 Min Stock Alert Level</label>

@@ -1073,9 +1073,15 @@ export default function RiceControl() {
         setNewItem({ name: '', price: '0' as any, cost_price: '0' as any, weight: 50 as any, stock: '0' as any, min_stock_level: 10 as any })
         
         setProducts(prev => [...prev, data[0]]);
-        setImportForm(prev => ({ ...prev, product_id: String(data[0].id) }));
-        setActiveView('import');
-        showToast('success', 'Product Created', 'Ready to receive stock.');
+        
+        // 🔥 FIX: Do NOT jump to the Import tab if we are adding a Retail product
+        if (activeView !== 'retail') {
+          setImportForm(prev => ({ ...prev, product_id: String(data[0].id) }));
+          setActiveView('import');
+          showToast('success', 'Product Created', 'Ready to receive stock.');
+        } else {
+          showToast('success', 'Product Created', 'Retail product added successfully.');
+        }
       }
     } catch (err: any) {
       showToast('error', 'Creation Failed', err.message);

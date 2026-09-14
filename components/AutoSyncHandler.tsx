@@ -40,25 +40,39 @@ export default function AutoSyncHandler() {
         // If neither condition is met, do not auto-submit
         if (!isPreviousDay && !isAfter10PM) return
 
-        // Load saved personal & business queues from localStorage
-        const rawPers = localStorage.getItem('expense_ledger_personal')
-        const rawBiz = localStorage.getItem('expense_ledger_business')
+        let allValid: any[] = [];
+        let keysToRemove: string[] = [];
 
-        const persList: any[] = rawPers ? JSON.parse(rawPers) : []
-        const bizList: any[] = rawBiz ? JSON.parse(rawBiz) : []
+        // 🔥 FIX: Loop through possible branch IDs (0 to 50) to catch all active drafts
+        for (let branchId = 0; branchId <= 50; branchId++) {
+          const persKey = `expense_ledger_personal_${branchId}`;
+          const bizKey = `expense_ledger_business_${branchId}`;
+          
+          const rawPers = localStorage.getItem(persKey);
+          const rawBiz = localStorage.getItem(bizKey);
 
-        // Filter out empty/placeholder rows
-        const validPers = persList.filter(
-          exp => exp.remarks?.trim() !== '' && exp.payments?.some((p: any) => Number(p.amount) > 0)
-        )
-        const validBiz = bizList.filter(
-          exp => exp.remarks?.trim() !== '' && exp.payments?.some((p: any) => Number(p.amount) > 0)
-        )
+          const persList: any[] = rawPers ? JSON.parse(rawPers) : [];
+          const bizList: any[] = rawBiz ? JSON.parse(rawBiz) : [];
 
-        const allValid = [
-          ...validPers.map(item => ({ ...item, tabType: 'PERSONAL' })),
-          ...validBiz.map(item => ({ ...item, tabType: 'BUSINESS' }))
-        ]
+          // Filter out empty/placeholder rows
+          const validPers = persList.filter(
+            exp => exp.remarks?.trim() !== '' && exp.payments?.some((p: any) => Number(p.amount) > 0)
+          );
+          const validBiz = bizList.filter(
+            exp => exp.remarks?.trim() !== '' && exp.payments?.some((p: any) => Number(p.amount) > 0)
+          );
+
+          if (validPers.length > 0 || validBiz.length > 0) {
+            keysToRemove.push(persKey);
+            keysToRemove.push(bizKey);
+          }
+
+          // Add the branch ID directly to the payload map
+          allValid.push(
+            ...validPers.map(item => ({ ...item, tabType: 'PERSONAL', branch_id: branchId })),
+            ...validBiz.map(item => ({ ...item, tabType: 'BUSINESS', branch_id: branchId }))
+          );
+        }
 
         // If there are no valid expenses waiting, just clean up old dates and exit
         if (allValid.length === 0) {
@@ -81,7 +95,8 @@ export default function AutoSyncHandler() {
           let totalRiel = 0
 
           for (const row of activePayments) {
-            const rawAmount = Number(row.amount)
+            // 🔥 RELIABILITY FIX: Strip commas from CurrencyInput strings to prevent NaN database corruption
+            const rawAmount = Number(String(row.amount).replace(/,/g, '')) || 0;
             if (row.method.includes('$')) {
               totalUsd += rawAmount
             } else {
@@ -96,7 +111,8 @@ export default function AutoSyncHandler() {
             remarks: exp.remarks,
             amount_usd: totalUsd,
             amount_riel: totalRiel,
-            description: exp.tabType
+            description: exp.tabType,
+            branch_id: exp.branch_id // 🔥 STAMPS THE EXACT BRANCH ID IT WAS FOUND IN
           }
         })
 
@@ -104,9 +120,8 @@ export default function AutoSyncHandler() {
         const { error } = await supabase.from('expenses').insert(payloadArray.reverse())
         if (error) throw error
 
-        // Clear local queues after successful sync
-        localStorage.removeItem('expense_ledger_personal')
-        localStorage.removeItem('expense_ledger_business')
+        // Clear local branch-specific queues after successful sync
+        keysToRemove.forEach(key => localStorage.removeItem(key));
         localStorage.setItem('expense_ledger_date', todayCambodia)
 
         // Notify user and trigger form reset in ExpenseDashboard
