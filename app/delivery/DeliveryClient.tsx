@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import { useFocusRefresh } from '@/lib/useFocusRefresh' // 🔥 FIX: Added missing hook import
 import { formatRiel, EXCHANGE_RATE } from '@/utils/formatters'
 import { CurrencyInput } from '@/components/Inputs'
 import { PaymentRow } from '@/types'
@@ -133,30 +134,8 @@ export default function DeliveryPage() {
     document.addEventListener('touchend', handleUp);
   };
 
-  useEffect(() => {
-    // 💣 SECURITY WIPE: Destroy unsubmitted payment forms and active modals 
-    // when switching branches to prevent Cross-Tenant Ghost Payments!
-    setInlinePayments({});
-    setCreditPayments({});
-    setSelectedMobileDelivery(null);
-    setExpandedCredit(null);
-
-    fetchDeliveries();
-
-    // 📡 WEBSOCKET ISOLATION: Append the branch ID to the channel name 
-    // so branches don't trigger unnecessary database refetches for each other!
-    const deliveryChannel = supabase.channel(`delivery-updates-${activeBranchId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoice_summaries' }, () => {
-        fetchDeliveries();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(deliveryChannel);
-    };
-  }, [loadLimit, activeBranchId])
-
-  async function fetchDeliveries() {
+  // 🔥 CLOSURE FIX: Wrap fetchDeliveries in useCallback to lock onto current branch
+  const fetchDeliveries = useCallback(async () => {
     setLoading(true);
     
     const { data: pendingData, error: pendingErr } = await supabase
@@ -185,7 +164,33 @@ export default function DeliveryPage() {
     }
     
     setLoading(false);
-  }
+  }, [activeBranchId, loadLimit, showToast]);
+
+  useEffect(() => {
+    // 💣 SECURITY WIPE: Destroy unsubmitted payment forms and active modals 
+    // when switching branches to prevent Cross-Tenant Ghost Payments!
+    setInlinePayments({});
+    setCreditPayments({});
+    setSelectedMobileDelivery(null);
+    setExpandedCredit(null);
+
+    fetchDeliveries();
+
+    // 📡 WEBSOCKET ISOLATION: Append the branch ID to the channel name 
+    // so branches don't trigger unnecessary database refetches for each other!
+    const deliveryChannel = supabase.channel(`delivery-updates-${activeBranchId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoice_summaries' }, () => {
+        fetchDeliveries();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(deliveryChannel);
+    };
+  }, [activeBranchId, fetchDeliveries])
+
+  // 🔥 RESTORED & SAFE: Window Focus Refresher
+  useFocusRefresh(fetchDeliveries);
 
   // 🔥 RESTORED FUNCTION & SECURITY FIX: Locks the status update strictly to the active branch
   async function updateInvoiceField(invoiceId: string, field: string, value: any) {

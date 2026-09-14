@@ -1,6 +1,6 @@
 'use client'
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useUserRole } from '@/lib/useUserRole'
 
@@ -30,11 +30,14 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     async function loadBranchData() {
       // 1. Fetch user session and profile data
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      if (!session) {
+        setIsLoadingBranches(false); // 🔥 BUG FIX: Release the loading lock if no session
+        return;
+      }
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select('branch_id, role') // 🔥 Ensure you are fetching the role!
+        .select('branch_id, role') 
         .eq('id', session.user.id)
         .single();
 
@@ -44,7 +47,7 @@ export function BranchProvider({ children }: { children: ReactNode }) {
 
       if (profile) {
         // 🔥 THE ROLE BARRIER
-        const isAdmin = profile.role === 'admin' || profile.role === 'owner'; // Adjust to match your exact DB role names
+        const isAdmin = profile.role === 'admin' || profile.role === 'owner'; 
 
         if (isAdmin) {
           // 👑 ADMIN: Allow localStorage override to roam between branches
@@ -63,29 +66,29 @@ export function BranchProvider({ children }: { children: ReactNode }) {
           localStorage.removeItem('pos_active_branch_id'); 
         }
       }
+      
+      setIsLoadingBranches(false); // 🔥 BUG FIX: Release the loading lock successfully!
     }
 
     loadBranchData();
   }, []);
 
-  // 🔥 THE FIX: Whenever the admin selects a new branch from the dropdown, save it to memory!
-  const handleSetBranch = (newBranchId: number) => {
-    // Only trigger the wipe if they are ACTUALLY changing to a different branch
+  // 🔥 CLOSURE FIX: Wrap in useCallback to prevent infinite render cycles across the app
+  const handleSetBranch = useCallback((newBranchId: number) => {
     if (newBranchId !== activeBranchId) {
       setActiveBranchId(newBranchId);
       localStorage.setItem('pos_active_branch_id', String(newBranchId));
       
-      // 💣 THE SECURITY WIPE: Destroy active cart and customer data to prevent cross-branch contamination!
+      // 💣 THE SECURITY WIPE: Clears legacy keys (Branch-specific keys are handled in their own components)
       localStorage.removeItem('pos_cart');
       localStorage.removeItem('pos_customer');
       localStorage.removeItem('pos_override');
       
-      // Fire the custom event so other components know to refetch their data
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('branch_changed'));
       }
     }
-  };
+  }, [activeBranchId]);
 
   return (
     <BranchContext.Provider value={{ 

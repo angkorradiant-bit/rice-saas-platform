@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { useToast } from '@/components/ToastProvider'
@@ -265,7 +265,39 @@ export default function ExpenseDashboard() {
     if (savedDbTabOrder) {
       try { setDbTabOrder(JSON.parse(savedDbTabOrder)); } catch(e){}
     }
+  }, [])
 
+  // --- API: Fetch Staff ---
+  // 🔥 CLOSURE FIX: Wrapped in useCallback to dynamically track activeBranchId
+  const fetchStaff = useCallback(async () => {
+    setIsFetchingStaff(true)
+    let q = supabase.from('staff').select('*').order('id', { ascending: true });
+    if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId); 
+    const { data } = await q;
+    if (data) setStaffList(data)
+    setIsFetchingStaff(false)
+  }, [activeBranchId]);
+
+  // --- API: Fetch Database Tab ---
+  // 🔥 CLOSURE FIX: Wrapped in useCallback to dynamically track activeBranchId
+  const fetchDatabase = useCallback(async () => {
+    setIsFetchingDb(true)
+    
+    let expQuery = supabase.from('expenses').select('*').order('created_at', { ascending: false }).limit(2000);
+    if (activeBranchId !== 0) expQuery = expQuery.eq('branch_id', activeBranchId); 
+
+    let debtQuery = supabase.from('staff_debt_history').select('*, staff:staff_id(name)').order('created_at', { ascending: false }).limit(2000);
+    if (activeBranchId !== 0) debtQuery = debtQuery.eq('branch_id', activeBranchId); 
+
+    const [ {data: exp}, {data: debt} ] = await Promise.all([ expQuery, debtQuery ])
+    
+    setDbExpenses(exp || []);
+    setDbStaffDebt(debt || []);
+    setIsFetchingDb(false)
+  }, [activeBranchId]);
+
+  // 🔥 CLOSURE FIX: Moved event listener to its own effect so it always uses the latest fetchDatabase
+  useEffect(() => {
     const handleAutoSynced = () => {
       setPendingPersonal([createNewExpense()]);
       setPendingBusiness([createNewExpense()]);
@@ -273,7 +305,7 @@ export default function ExpenseDashboard() {
     };
     window.addEventListener('expense_ledger_synced', handleAutoSynced);
     return () => window.removeEventListener('expense_ledger_synced', handleAutoSynced);
-  }, [])
+  }, [fetchDatabase]);
 
   // 🔥 FETCH DATA WHEN BRANCH CHANGES
   useEffect(() => {
@@ -301,7 +333,7 @@ export default function ExpenseDashboard() {
       fetchStaff();
       fetchDatabase();
     }
-  }, [activeBranchId, isMounted]);
+  }, [activeBranchId, isMounted, fetchStaff, fetchDatabase]);
 
   useEffect(() => {
     if (isMounted) {
@@ -379,33 +411,6 @@ export default function ExpenseDashboard() {
 
   const addNewExpense = () => {
     setActiveList([createNewExpense(), ...getActiveList()]);
-  }
-
-  // --- API: Fetch Staff ---
-  async function fetchStaff() {
-    setIsFetchingStaff(true)
-    let q = supabase.from('staff').select('*').order('id', { ascending: true });
-    if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId); // 🔥 DYNAMIC BRANCH FILTER
-    const { data } = await q;
-    if (data) setStaffList(data)
-    setIsFetchingStaff(false)
-  }
-
-  // --- API: Fetch Database Tab ---
-  async function fetchDatabase() {
-    setIsFetchingDb(true)
-    
-    let expQuery = supabase.from('expenses').select('*').order('created_at', { ascending: false }).limit(2000);
-    if (activeBranchId !== 0) expQuery = expQuery.eq('branch_id', activeBranchId); // 🔥 DYNAMIC BRANCH FILTER
-
-    let debtQuery = supabase.from('staff_debt_history').select('*, staff:staff_id(name)').order('created_at', { ascending: false }).limit(2000);
-    if (activeBranchId !== 0) debtQuery = debtQuery.eq('branch_id', activeBranchId); // 🔥 DYNAMIC BRANCH FILTER
-
-    const [ {data: exp}, {data: debt} ] = await Promise.all([ expQuery, debtQuery ])
-    
-    setDbExpenses(exp || []);
-    setDbStaffDebt(debt || []);
-    setIsFetchingDb(false)
   }
 
   // --- Action: Delete Database Record ---

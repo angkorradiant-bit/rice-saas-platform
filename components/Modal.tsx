@@ -10,11 +10,9 @@ interface ModalProps {
 }
 
 export default function Modal({ isOpen, onClose, title, children, maxWidth = '400px', icon }: ModalProps) {
-  useEffect(() => {
-    if (isOpen) document.body.style.overflow = 'hidden';
-    else document.body.style.overflow = 'unset';
-    return () => { document.body.style.overflow = 'unset'; }
-  }, [isOpen]);
+  // 🔥 PWA FIX: Removed the document.body.style.overflow manipulation! 
+  // Our globals.css already permanently locks the body to 'hidden' to prevent Safari bounce. 
+  // Setting it to 'unset' here when a modal closes was breaking the app's fixed layout.
 
   if (!isOpen) return null;
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import * as htmlToImage from 'html-to-image'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
@@ -56,23 +56,8 @@ export default function CogsReportPage() {
     setToDate(localISOTime);
   }, [])
 
-  // 🔥 Automatically refetches optimal data when you change tabs, dates, OR BRANCHES!
-  useEffect(() => {
-    // 💣 SECURITY WIPE: Destroy active bulk selections and inline payment forms 
-    // when switching branches to prevent Cross-Tenant Ghost Settlements!
-    setSelectedDays([]);
-    setInlinePayments({});
-    setBulkPaymentRows([{ id: Date.now(), method: 'Mom Liability ៛', amount: '' }]);
-    setBulkModalOpen(false);
-
-    if (fromDate && toDate) {
-      fetchReportData();
-    }
-  }, [fromDate, toDate, activeMainTab, timeFilter, activeBranchId]) // 🔥 BRANCH FILTER ATTACHED
-
-  useFocusRefresh(fetchReportData);
-
-  async function fetchReportData() {
+  // 🔥 CLOSURE FIX: Wrap fetchReportData in useCallback so it dynamically binds to the active branch
+  const fetchReportData = useCallback(async () => {
     setLoading(true)
     
     // 1. Dynamically calculate the Database Date Range based on the active tab
@@ -133,7 +118,23 @@ export default function CogsReportPage() {
     setLiveMomLiability(Number(liabilityData) || 0);
 
     setLoading(false)
-  }
+  }, [fromDate, toDate, activeMainTab, timeFilter, activeBranchId]);
+
+  // 🔥 Automatically refetches optimal data when you change tabs, dates, OR BRANCHES!
+  useEffect(() => {
+    // 💣 SECURITY WIPE: Destroy active bulk selections and inline payment forms 
+    // when switching branches to prevent Cross-Tenant Ghost Settlements!
+    setSelectedDays([]);
+    setInlinePayments({});
+    setBulkPaymentRows([{ id: Date.now(), method: 'Mom Liability ៛', amount: '' }]);
+    setBulkModalOpen(false);
+
+    if (fromDate && toDate) {
+      fetchReportData();
+    }
+  }, [fetchReportData, fromDate, toDate]) 
+
+  useFocusRefresh(fetchReportData);
 
   // 🟢 Downloads the exact A4 PDF document directly from your API route (passing screen records)
   const handleDownload = async () => {

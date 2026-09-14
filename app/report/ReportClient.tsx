@@ -1,7 +1,8 @@
 'use client'
 
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import { useFocusRefresh } from '@/lib/useFocusRefresh' // 🔥 Added custom hook!
 import { formatRiel, formatUSD, formatNumber, parseOwner, EXCHANGE_RATE } from '@/utils/formatters'
 import { useToast } from '@/components/ToastProvider'
 import TableSkeleton from '@/components/TableSkeleton'
@@ -24,6 +25,49 @@ export default function ReportControlPage() {
   const [retailSales, setRetailSales] = useState<any[]>([])
   const [expenses, setExpenses] = useState<any[]>([])
   const [invoicePayments, setInvoicePayments] = useState<any[]>([])
+
+  // --- 1. FETCH SUPABASE DATA (OPTIMIZED PAYLOADS) ---
+  // 🔥 CLOSURE FIX: Wrap fetchReportData in useCallback to safely track the active branch
+  const fetchReportData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const now = new Date()
+      const firstDayOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()
+
+      const buildQNarrow = (table: string, columns: string) => {
+        let q = supabase.from(table).select(columns);
+        if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId);
+        return q;
+      }
+
+      const [
+        { data: salesData },
+        { data: invData },
+        { data: retData },
+        { data: expData },
+        { data: payData }
+      ] = await Promise.all([
+        buildQNarrow('sales', 'id, created_at, qty, price_per_bag, cogs_price, owner, custom_rice_type, rice_type').gte('created_at', firstDayOfLastMonth),
+        buildQNarrow('invoice_summaries', 'invoice_id, created_at, owner, total_sales, total_profit, delivery_status').gte('created_at', firstDayOfLastMonth),
+        buildQNarrow('retail_sales', 'id, created_at, qty, price_per_bag, cogs_price, owner, custom_rice_type, rice_type').gte('created_at', firstDayOfLastMonth),
+        buildQNarrow('expenses', 'id, created_at, amount_riel, amount_usd, spender, remarks, description, expense_date').gte('created_at', firstDayOfLastMonth),
+        buildQNarrow('invoice_payments', 'invoice_id, amount_paid_usd, amount_paid_riel, payment_method, payment_date').gte('payment_date', firstDayOfLastMonth)
+      ])
+
+      setWholesaleSales(salesData || [])
+      
+      const activeInvoices = (invData || []).filter((inv: any) => inv.delivery_status !== 'Voided');
+      setInvoices(activeInvoices);
+      
+      setRetailSales(retData || [])
+      setExpenses(expData || [])
+      setInvoicePayments(payData || [])
+    } catch (err: any) {
+      showToast('error', 'Fetch Error', 'Failed to load report data.')
+    } finally {
+      setLoading(false)
+    }
+  }, [activeBranchId, showToast]);
 
   useEffect(() => {
     // 💣 SECURITY WIPE: Clear all report arrays instantly on branch switch
@@ -48,54 +92,10 @@ export default function ReportControlPage() {
     return () => {
       supabase.removeChannel(reportSyncChannel);
     }
-  }, [activeBranchId])
+  }, [activeBranchId, fetchReportData])
 
-  // --- 1. FETCH SUPABASE DATA (OPTIMIZED PAYLOADS) ---
-  async function fetchReportData() {
-    setLoading(true)
-    try {
-      const now = new Date()
-      const firstDayOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()
-
-      const buildQNarrow = (table: string, columns: string) => {
-        let q = supabase.from(table).select(columns);
-        if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId);
-        return q;
-      }
-
-      const [
-        { data: salesData },
-        { data: invData },
-        { data: retData },
-        { data: expData },
-        { data: payData }
-      ] = await Promise.all([
-        buildQNarrow('sales', 'id, created_at, qty, price_per_bag, cogs_price, owner, custom_rice_type, rice_type').gte('created_at', firstDayOfLastMonth),
-        
-        // 🔥 FIX 1: Added 'delivery_status' to the SELECT query so we can identify voids
-        buildQNarrow('invoice_summaries', 'invoice_id, created_at, owner, total_sales, total_profit, delivery_status').gte('created_at', firstDayOfLastMonth),
-        
-        buildQNarrow('retail_sales', 'id, created_at, qty, price_per_bag, cogs_price, owner, custom_rice_type, rice_type').gte('created_at', firstDayOfLastMonth),
-        // 🛡️ BUG FIX: Changed 'category' to 'remarks' to prevent 400 Bad Request database crash
-        buildQNarrow('expenses', 'id, created_at, amount_riel, amount_usd, spender, remarks, description, expense_date').gte('created_at', firstDayOfLastMonth),
-        buildQNarrow('invoice_payments', 'invoice_id, amount_paid_usd, amount_paid_riel, payment_method, payment_date').gte('payment_date', firstDayOfLastMonth)
-      ])
-
-      setWholesaleSales(salesData || [])
-      
-      // 🔥 FIX 2: Strictly filter out any invoice marked as 'Voided' before saving to state
-      const activeInvoices = (invData || []).filter((inv: any) => inv.delivery_status !== 'Voided');
-      setInvoices(activeInvoices);
-      
-      setRetailSales(retData || [])
-      setExpenses(expData || [])
-      setInvoicePayments(payData || [])
-    } catch (err: any) {
-      showToast('error', 'Fetch Error', 'Failed to load report data.')
-    } finally {
-      setLoading(false)
-    }
-  }
+  // 🚀 Activate silent background updates
+  useFocusRefresh(fetchReportData);
 
   // --- 2. DATE HELPER FUNCTIONS ---
   const now = new Date()

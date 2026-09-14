@@ -1,9 +1,10 @@
 'use client'
 
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabaseClient'
 import * as htmlToImage from 'html-to-image'
+import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { formatRiel, formatUSD, EXCHANGE_RATE } from '@/utils/formatters'
 import { CurrencyInput } from '@/components/Inputs'
 import { Product, InventoryBatch, Customer } from '@/types'
@@ -409,33 +410,34 @@ export default function POSPage() {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       if (!urlParams.get('edit')) {
-        const savedCart = localStorage.getItem('pos_cart');
-        if (savedCart) setCart(JSON.parse(savedCart));
+        // 🔥 SECURITY FIX: Isolate local storage to prevent ghost carts bleeding across branches
+        const savedCart = localStorage.getItem(`pos_cart_${activeBranchId}`);
+        if (savedCart) setCart(JSON.parse(savedCart)); else setCart([]);
         
-        const savedCust = localStorage.getItem('pos_customer');
-        if (savedCust) setSelectedCustomerId(savedCust);
+        const savedCust = localStorage.getItem(`pos_customer_${activeBranchId}`);
+        if (savedCust) setSelectedCustomerId(savedCust); else setSelectedCustomerId('');
 
-        const savedOverride = localStorage.getItem('pos_override');
-        if (savedOverride) setCartCustomerNameOverride(savedOverride);
+        const savedOverride = localStorage.getItem(`pos_override_${activeBranchId}`);
+        if (savedOverride) setCartCustomerNameOverride(savedOverride); else setCartCustomerNameOverride('');
         
-        const savedTab = localStorage.getItem('pos_tab');
-        if (savedTab) setActiveTab(savedTab as 'retail' | 'wholesale');
+        const savedTab = localStorage.getItem(`pos_tab_${activeBranchId}`);
+        if (savedTab) setActiveTab(savedTab as 'retail' | 'wholesale'); else setActiveTab('retail');
 
-        // 🔥 ADDED: Load saved sort preference
-        const savedSort = localStorage.getItem('pos_retail_price_sort');
-        if (savedSort) setRetailPriceSort(savedSort as any);
+        const savedSort = localStorage.getItem(`pos_retail_price_sort_${activeBranchId}`);
+        if (savedSort) setRetailPriceSort(savedSort as any); else setRetailPriceSort('none');
       }
     } catch (e) { console.error('Error loading POS state', e) }
-  }, []);
+  }, [activeBranchId]); // Relies on activeBranchId to dynamically swap memory banks
 
   useEffect(() => {
     if (isPosMounted && !editingInvoiceId) {
-      localStorage.setItem('pos_cart', JSON.stringify(cart));
-      localStorage.setItem('pos_customer', selectedCustomerId);
-      localStorage.setItem('pos_override', cartCustomerNameOverride);
-      localStorage.setItem('pos_tab', activeTab);
+      localStorage.setItem(`pos_cart_${activeBranchId}`, JSON.stringify(cart));
+      localStorage.setItem(`pos_customer_${activeBranchId}`, selectedCustomerId);
+      localStorage.setItem(`pos_override_${activeBranchId}`, cartCustomerNameOverride);
+      localStorage.setItem(`pos_tab_${activeBranchId}`, activeTab);
+      localStorage.setItem(`pos_retail_price_sort_${activeBranchId}`, retailPriceSort);
     }
-  }, [cart, selectedCustomerId, cartCustomerNameOverride, activeTab, isPosMounted, editingInvoiceId]);
+  }, [cart, selectedCustomerId, cartCustomerNameOverride, activeTab, retailPriceSort, isPosMounted, editingInvoiceId, activeBranchId]);
 
   const totalRiel = cart.reduce((sum, item) => {
     const isNegativeItem = 
@@ -690,7 +692,7 @@ export default function POSPage() {
     }
   }, [completedSale, previewImageUrl, showInvoicePreview])
 
-  async function loadProductsAndSettings() {
+  const loadProductsAndSettings = useCallback(async () => {
     const { data: prodData } = await supabase.from('products').select('*').eq('is_archived', false).eq('branch_id', activeBranchId).order('id', { ascending: true })
     if (prodData) setProducts(prodData)
     
@@ -705,21 +707,20 @@ export default function POSPage() {
     const { data: hiddenSet } = await supabase.from('app_settings').select('*').eq('setting_key', hiddenKey).maybeSingle()
     if (hiddenSet && hiddenSet.setting_value) setHiddenRetailIds(hiddenSet.setting_value)
 
-    // 🔥 LOAD CUSTOM CATEGORY ORDER
     const { data: catOrderSet } = await supabase.from('app_settings').select('*').eq('setting_key', catOrderKey).maybeSingle();
     if (catOrderSet && catOrderSet.setting_value) {
       const savedCats = catOrderSet.setting_value;
-      const missingCats = RICE_CATEGORIES.filter(c => !savedCats.includes(c)); // In case new standard categories were added
+      const missingCats = RICE_CATEGORIES.filter(c => !savedCats.includes(c)); 
       setRiceCategories([...savedCats, ...missingCats]);
     }
-  }
+  }, [activeBranchId]);
 
-  async function loadCustomers() {
+  const loadCustomers = useCallback(async () => {
     const { data } = await supabase.from('customers').select('*').eq('branch_id', activeBranchId).order('name', { ascending: true })
     setCustomers(data || [])
-  }
+  }, [activeBranchId]);
 
-  async function loadBatches() {
+  const loadBatches = useCallback(async () => {
     const { data } = await supabase.from('inventory_batches').select('*').eq('branch_id', activeBranchId).order('created_at', { ascending: true });
     if (data) {
       const batchMap: Record<number, InventoryBatch[]> = {};
@@ -732,9 +733,9 @@ export default function POSPage() {
       });
       setActiveBatches(batchMap);
     }
-  }
+  }, [activeBranchId]);
 
-  async function loadMtdSales() {
+  const loadMtdSales = useCallback(async () => {
     const today = new Date();
     const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
     const { data } = await supabase.from('sales').select('product_id, qty').gte('created_at', firstDay).eq('branch_id', activeBranchId);
@@ -745,19 +746,36 @@ export default function POSPage() {
       });
       setMtdSalesStats(stats);
     }
-  }
-  async function loadSuppliers() {
+  }, [activeBranchId]);
+
+  const loadSuppliers = useCallback(async () => {
     const { data } = await supabase.from('suppliers').select('*').eq('is_archived', false).eq('branch_id', activeBranchId).order('name', { ascending: true })
     if (data) setSuppliers(data)
-  }
+  }, [activeBranchId]);
 
-  async function loadMixHistory() {
-    const { data } = await supabase.from('app_settings').select('setting_value').eq('setting_key', 'calculator_history').single()
+  const loadMixHistory = useCallback(async () => {
+    // 🔒 LEAK FIX: Read from isolated branch key instead of global!
+    const branchKey = activeBranchId === 0 ? 'calculator_history' : `calculator_history_${activeBranchId}`;
+    const { data } = await supabase.from('app_settings').select('setting_value').eq('setting_key', branchKey).maybeSingle()
     if (data && data.setting_value) {
       setGlobalHistory(data.setting_value);
-      setMixHistory(data.setting_value.filter((h: any) => h.branch_id === activeBranchId || !h.branch_id));
+      setMixHistory(data.setting_value);
     }
-  }
+  }, [activeBranchId]);
+
+  const loadAllData = useCallback(async () => {
+    await Promise.all([
+      loadProductsAndSettings(),
+      loadCustomers(),
+      loadBatches(),
+      loadMtdSales(),
+      loadSuppliers(),
+      loadMixHistory()
+    ]);
+  }, [loadProductsAndSettings, loadCustomers, loadBatches, loadMtdSales, loadSuppliers, loadMixHistory]);
+
+  // 🚀 Activate silent background updates
+  useFocusRefresh(loadAllData);
 
   const formatRielSymbol = (amountInRiel: number) => `${new Intl.NumberFormat('en-US').format(Math.round(amountInRiel))} ៛`;
   const formatRielFromNative = (rielAmount: number) => `${new Intl.NumberFormat('en-US').format(Math.round(rielAmount))} ៛`;
@@ -1054,8 +1072,11 @@ export default function POSPage() {
       newHidden = hiddenRetailIds.filter(id => id !== productId);
     }
     setHiddenRetailIds(newHidden);
+    
+    // 🔒 LEAK FIX: Ensure we only hide this item for the current branch!
+    const branchKey = activeBranchId === 0 ? 'hidden_retail_ids' : `hidden_retail_ids_${activeBranchId}`;
     await supabase.from('app_settings').upsert(
-      { setting_key: 'hidden_retail_ids', setting_value: newHidden },
+      { setting_key: branchKey, setting_value: newHidden },
       { onConflict: 'setting_key' }
     );
   }

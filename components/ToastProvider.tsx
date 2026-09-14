@@ -10,18 +10,25 @@ const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<{ show: boolean; type: ToastType; title: string; msg: string } | null>(null);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null); // 🔥 NEW: Track active timer
 
-  const showToast = (type: ToastType, title: string, msg: string) => {
+  // 🔥 CLOSURE FIX: Stabilize function memory and prevent premature toast dismissal
+  const showToast = React.useCallback((type: ToastType, title: string, msg: string) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    
     setToast({ show: true, type, title, msg });
-    setTimeout(() => setToast(null), 4000); 
-  };
+    
+    timerRef.current = setTimeout(() => setToast(null), 4000); 
+  }, []);
 
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
       {toast && (
         <div style={{
-          position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 999999,
+          position: 'fixed', 
+          top: 'max(20px, env(safe-area-inset-top, 20px))', /* 🔥 PWA FIX: Safely avoids the iOS Notch/Dynamic Island */
+          left: '50%', transform: 'translateX(-50%)', zIndex: 999999,
           background: '#fff', borderLeft: `6px solid ${toast.type === 'success' ? '#10b981' : toast.type === 'error' ? '#ef4444' : '#3b82f6'}`,
           padding: '16px 24px', borderRadius: '12px', boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
           display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '300px',

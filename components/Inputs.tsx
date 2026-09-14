@@ -4,14 +4,18 @@ import React, { useState, useEffect } from 'react'
 export function CurrencyInput({ value, onChange, placeholder, style, autoFocus, className, onFocus, onEnter, onBlurCustom }: any) {
   const [inputValue, setInputValue] = useState('');
 
+  // 🔥 CLOSURE FIX: Use functional state update to prevent stale reads
   useEffect(() => {
     if (value === '' || value === undefined || value === 0) {
       setInputValue('');
     } else {
-      const parsed = parseFloat(inputValue.replace(/,/g, ''));
-      if (parsed !== Number(value)) {
-        setInputValue(new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Number(value)));
-      }
+      setInputValue(prev => {
+        const parsed = parseFloat(prev.replace(/,/g, ''));
+        if (parsed !== Number(value)) {
+          return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Number(value));
+        }
+        return prev;
+      });
     }
   }, [value]);
 
@@ -46,7 +50,7 @@ export function CurrencyInput({ value, onChange, placeholder, style, autoFocus, 
       }}
       onBlur={() => {
         if (onBlurCustom) onBlurCustom();
-        setTimeout(() => { window.scrollTo(0, 0); document.body.scrollTop = 0; }, 100);
+        // 🔥 UX FIX: Removed window.scrollTo(0, 0) to prevent the screen from violently jumping to the top!
       }}
       style={{ ...style, color: '#334155' }}
       className={className || "mobile-input-field no-spinners"}
@@ -57,14 +61,18 @@ export function CurrencyInput({ value, onChange, placeholder, style, autoFocus, 
 export function CartInput({ value, onChange, isQty, fontSize = '14px', onFocus }: any) {
   const [inputValue, setInputValue] = useState('');
 
+  // 🔥 CLOSURE FIX: Use functional state update to prevent stale reads
   useEffect(() => {
     if (value === '' || value === undefined) {
       setInputValue('');
     } else {
-      const parsed = parseFloat(inputValue.replace(/,/g, ''));
-      if (parsed !== Number(value)) {
-        setInputValue(new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Number(value)));
-      }
+      setInputValue(prev => {
+        const parsed = parseFloat(prev.replace(/,/g, ''));
+        if (parsed !== Number(value)) {
+          return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Number(value));
+        }
+        return prev;
+      });
     }
   }, [value]);
 

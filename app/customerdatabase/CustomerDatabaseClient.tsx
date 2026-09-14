@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { Customer } from '@/types'
@@ -57,24 +57,9 @@ export default function CustomerDatabasePage() {
   })
   const [mobileEditCustomer, setMobileEditCustomer] = useState<Customer | null>(null); // 🔥 Mobile Control Center
 
-  // --- LIFECYCLE ---
-  useEffect(() => {
-    // 💣 SECURITY WIPE: Destroy active selections, inline edits, and mobile modals
-    // when switching branches to prevent Cross-Tenant Ghost Deletions!
-    setSelectedToDelete(new Set());
-    setEditingCell(null);
-    setMobileEditCustomer(null);
-    setShowAddModal(false);
-    setNewCustomer({ name: '', owner: 'Both', type: 'ហូប', phone: '', location: '', google_map: '' });
-
-    loadCustomers()
-    fetchSettings()
-  }, [activeBranchId]) 
-
-  // useFocusRefresh(loadCustomers); // 🔥 Disabled to stop constant re-fetching on tab focus
-
   // --- DATABASE OPERATIONS ---
-  async function fetchSettings() {
+  // 🔥 CLOSURE FIX: Wrap in useCallback to lock onto the current activeBranchId
+  const fetchSettings = useCallback(async () => {
     const branchSuffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
     const keys = [`cust_col_widths${branchSuffix}`, `cust_col_order${branchSuffix}`];
     const fallbackKeys = ['cust_col_widths', 'cust_col_order'];
@@ -95,10 +80,11 @@ export default function CustomerDatabasePage() {
         setColumnOrder(savedOrder)
       }
     }
-  }
+  }, [activeBranchId]);
 
-  async function loadCustomers() {
-    setIsLoading(true)
+  // 🔥 CLOSURE FIX: Wrap in useCallback to safely pass to useFocusRefresh
+  const loadCustomers = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsLoading(true)
     const { data, error } = await supabase
       .from('customers')
       .select('*')
@@ -108,10 +94,28 @@ export default function CustomerDatabasePage() {
       
     if (!error && data) {
       setCustomers(data as Customer[])
-      setEdits({})
     }
     setIsLoading(false)
-  }
+  }, [activeBranchId]);
+
+  // --- LIFECYCLE ---
+  useEffect(() => {
+    // 💣 SECURITY WIPE: Destroy active selections, inline edits, and mobile modals
+    // when switching branches to prevent Cross-Tenant Ghost Deletions!
+    setSelectedToDelete(new Set());
+    setEditingCell(null);
+    setMobileEditCustomer(null);
+    setShowAddModal(false);
+    setEdits({}); // 🔥 OPTIMIZATION: Synchronously wipe edits instantly on branch switch
+    setNewCustomer({ name: '', owner: 'Both', type: 'ហូប', phone: '', location: '', google_map: '' });
+
+    loadCustomers(false);
+    fetchSettings();
+  }, [loadCustomers, fetchSettings]); 
+
+  // 🔥 RESTORED & SAFE: Because loadCustomers is now a stable callback, 
+  // this will only refresh silently in the background when the user returns to the tab!
+  useFocusRefresh(() => loadCustomers(true));
 
   // --- RECORD OPERATIONS ---
   const handleSaveRecord = async (id: string): Promise<boolean> => {

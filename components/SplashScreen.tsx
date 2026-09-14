@@ -7,15 +7,21 @@ export default function SplashScreen({ children }: { children: React.ReactNode }
   const [fadeState, setFadeState] = useState(false) // false = solid, true = fading
 
   useEffect(() => {
+    let fadeTimer: ReturnType<typeof setTimeout>;
+    
     // Hold the splash screen for 1.8 seconds, then fade out smoothly
     const timer = setTimeout(() => {
       setFadeState(true)
       
       // Completely remove the splash screen from DOM after fade completes
-      setTimeout(() => setIsLoading(false), 500) 
+      fadeTimer = setTimeout(() => setIsLoading(false), 500) 
     }, 1800)
     
-    return () => clearTimeout(timer)
+    // 🔥 CLOSURE FIX: Safely clear both timers to prevent unmounted state updates
+    return () => {
+      clearTimeout(timer);
+      if (fadeTimer) clearTimeout(fadeTimer);
+    }
   }, [])
 
   return (
@@ -64,8 +70,8 @@ export default function SplashScreen({ children }: { children: React.ReactNode }
         </div>
       )}
       
-      {/* Changed 100dvh to 100% here to stop layout pushing */}
-      <div style={{ display: fadeState && !isLoading ? 'block' : isLoading ? 'none' : 'block', height: '100%', width: '100%' }}>
+      {/* 🔥 UX/PWA FIX: Removed display 'none'. Let the app silently hydrate and calculate layout behind the splash screen! */}
+      <div style={{ height: '100%', width: '100%' }}>
         {children}
       </div>
     </>
