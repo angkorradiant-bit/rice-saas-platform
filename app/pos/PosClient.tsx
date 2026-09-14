@@ -2278,7 +2278,9 @@ export default function POSPage() {
 
               {activeTab === 'retail' && (
                 <div className="hide-scrollbar" style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px', alignItems: 'center', overflowX: 'auto', width: '100%', paddingBottom: '4px' }}>
-                  <div className="saas-tab-container hide-scrollbar" style={{ flexWrap: 'nowrap', overflowX: 'auto', marginBottom: '0px', background: '#f1f5f9', border: 'none', boxShadow: 'none', flexShrink: 0 }}>
+                  
+                  {/* 🔥 STRETCHED ACTIVE/INACTIVE CONTAINER (42px Height) */}
+                  <div className="hide-scrollbar" style={{ flex: 1, display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', background: '#f8fafc', border: '1px solid #e2e8f0', height: '48px', padding: '4px', boxSizing: 'border-box', borderRadius: '8px', alignItems: 'center' }}>
                     <button 
                       onClick={() => setRetailSubTab('active')} 
                       onDragOver={(e) => e.preventDefault()} 
@@ -2287,8 +2289,7 @@ export default function POSPage() {
                         const pid = Number(e.dataTransfer.getData('product_id'));
                         if (pid) toggleProductActiveStatus(pid, 'active');
                       }}
-                      className={`saas-tab ${retailSubTab === 'active' ? 'active' : ''}`}
-                      style={{ minWidth: 'max-content' }}
+                      style={{ flex: 1, height: '100%', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px', borderRadius: '6px', fontSize: '13px', whiteSpace: 'nowrap', border: 'none', background: retailSubTab === 'active' ? '#b58a3d' : 'transparent', color: retailSubTab === 'active' ? '#fff' : '#64748b', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s' }}
                     >
                       Active ({products.filter(p => parseFloat(String(p.weight)) < 50 && !hiddenRetailIds.includes(p.id)).length})
                     </button>
@@ -2301,14 +2302,30 @@ export default function POSPage() {
                         const pid = Number(e.dataTransfer.getData('product_id'));
                         if (pid) toggleProductActiveStatus(pid, 'inactive');
                       }}
-                      className={`saas-tab ${retailSubTab === 'inactive' ? 'active' : ''}`}
-                      style={retailSubTab === 'inactive' ? { background: '#ef4444', color: '#fff', minWidth: 'max-content' } : { minWidth: 'max-content' }}
+                      style={{ 
+                        flex: 1, 
+                        height: '100%', 
+                        margin: 0, 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        padding: '0 12px', 
+                        borderRadius: '8px', 
+                        fontSize: '14px',
+                        whiteSpace: 'nowrap',
+                        border: 'none',
+                        background: retailSubTab === 'inactive' ? '#ef4444' : 'transparent',
+                        color: retailSubTab === 'inactive' ? '#fff' : '#64748b',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
                     >
                       Non-Active ({products.filter(p => parseFloat(String(p.weight)) < 50 && hiddenRetailIds.includes(p.id)).length})
                     </button>
                   </div>
                   
-                  {/* 🟢 NEW RETAIL BUTTONS (COMPACT 1-ROW DESIGN) */}
+                  {/* 🟢 SQUARE ADD BUTTON (42px Height) */}
                   <button 
                     onClick={() => {
                         setNewItem({ name: '', price: '' as any, cost_price: '' as any, weight: 1, stock: '' as any, min_stock_level: 10, linked_wholesale_id: '' as any });
@@ -2319,8 +2336,8 @@ export default function POSPage() {
                       flexShrink: 0, 
                       background: '#10b981', 
                       color: '#fff', 
-                      width: isDeviceMobile ? '40px' : 'auto',
-                      height: '40px',
+                      width: isDeviceMobile ? '42px' : 'auto',
+                      height: '42px',
                       padding: isDeviceMobile ? '0' : '0 16px', 
                       borderRadius: '8px', 
                       fontWeight: 'bold', 
@@ -2337,6 +2354,7 @@ export default function POSPage() {
                     {!isDeviceMobile && <span>Add New</span>}
                   </button>
                   
+                  {/* 🟢 SQUARE SORT BUTTON (42px Height) WITH SLIM VECTOR */}
                   <button 
                     onClick={() => {
                         const next = retailPriceSort === 'none' ? 'desc' : retailPriceSort === 'desc' ? 'asc' : 'none';
@@ -2347,8 +2365,8 @@ export default function POSPage() {
                     style={{ 
                       flexShrink: 0, 
                       color: retailPriceSort !== 'none' ? '#3b82f6' : '#0f172a', 
-                      width: isDeviceMobile ? '40px' : 'auto',
-                      height: '40px',
+                      width: isDeviceMobile ? '42px' : 'auto',
+                      height: '42px',
                       padding: isDeviceMobile ? '0' : '0 16px', 
                       borderRadius: '8px', 
                       fontWeight: 'bold', 
@@ -2356,18 +2374,19 @@ export default function POSPage() {
                       display: 'flex', 
                       alignItems: 'center', 
                       justifyContent: 'center',
-                      gap: '6px', 
-                      cursor: 'pointer'
+                      gap: '4px', 
+                      cursor: 'pointer',
+                      border: '1px solid #cbd5e1',
+                      background: retailPriceSort !== 'none' ? '#eff6ff' : '#ffffff',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
                     }}
                   >
-                    {/* Clean Funnel Filter Icon matching Inventory Page */}
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
-                    
-                    {/* Tiny visual indicator so you still know which way it's sorting */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>
+                    </div>
                     {retailPriceSort === 'desc' && <span style={{ marginLeft: isDeviceMobile ? '0' : '4px', fontSize: '12px' }}>↓</span>}
                     {retailPriceSort === 'asc' && <span style={{ marginLeft: isDeviceMobile ? '0' : '4px', fontSize: '12px' }}>↑</span>}
-
-                    {!isDeviceMobile && <span>Sort Price</span>}
+                    {!isDeviceMobile && <span style={{ marginLeft: '4px' }}>Sort Price</span>}
                   </button>
                 </div>
               )}
