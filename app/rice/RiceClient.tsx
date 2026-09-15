@@ -405,10 +405,12 @@ export default function RiceControl() {
 
   const handleManualPull = async (retailId: number, wholesaleId: number) => {
     const wholesaleProduct = products.find(p => p.id === wholesaleId);
-    if (!wholesaleProduct || Number(wholesaleProduct.stock) < 1) {
-      showToast('error', 'Action Blocked', 'Cannot pull: Wholesale bag is out of stock!');
+    if (!wholesaleProduct) {
+      showToast('error', 'Action Blocked', 'Cannot pull: Wholesale bag not found!');
       return;
     }
+    // 🔥 OVERSELL FIX: Removed the "stock < 1" check! 
+    // You can now safely pull bags to restock retail even if wholesale stock goes negative.
 
     setIsProcessing(true);
     try {
@@ -1295,7 +1297,8 @@ export default function RiceControl() {
         if (activeCategory === '❌ Out of Stock') {
             if (!isEditingThisRow && Number(p.stock) > 0) return false;
         } else {
-            if (!isEditingThisRow && Number(p.stock) <= 0) return false;
+            // 🔥 OVERSELL FIX: We commented out the line below so 0 or negative stock stays visible!
+            // if (!isEditingThisRow && Number(p.stock) <= 0) return false;
         }
       }
       if (activeView === 'wholesale' && activeCategory !== 'All' && activeCategory !== '❌ Out of Stock') {
@@ -1668,7 +1671,8 @@ export default function RiceControl() {
                                         <input autoFocus className="saas-input" placeholder="Search Wholesale bag..." value={dropdownSearch} onChange={e => setDropdownSearch(e.target.value)} onBlur={() => setTimeout(() => setActiveDropdownId(null), 200)} onKeyDown={e => e.key === 'Escape' && setActiveDropdownId(null)} />
 <div className="dropdown-results-tray">
   <div className="dropdown-row clear-option" onMouseDown={(e) => { e.stopPropagation(); handleLinkWholesaleBag(p.id, null); }}>❌ Clear Linked Bag</div>
-  {products.filter(wp => wp.weight > 1 && Number(wp.stock) > 0 && wp.name.toLowerCase().includes(dropdownSearch.toLowerCase())).map(wp => (
+  {/* 🔥 OVERSELL FIX: Allow 0 or negative stock wholesale bags to be linked */}
+  {products.filter(wp => wp.weight > 1 && wp.name.toLowerCase().includes(dropdownSearch.toLowerCase())).map(wp => (
                                             <div key={wp.id} className="dropdown-row" onMouseDown={(e) => { e.stopPropagation(); handleLinkWholesaleBag(p.id, wp); }}>
                                               <span style={{ fontWeight: 'normal', color: '#334155' }}>{wp.name}</span>
                                               <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px' }}>(Stock: {wp.stock} • {formatRiel(Number(wp.cost_price))})</span>
@@ -2328,6 +2332,19 @@ export default function RiceControl() {
             const mBatches = activeBatchesMap[p.id] || [];
             mBatches.sort((a,b) => a.id - b.id);
 
+            // 🔥 MOBILE COGS FIX: Dynamically calculate the Cost Price from the parent bag!
+            let displayCostPrice = edits[p.id]?.cost_price ?? p.cost_price;
+            let isCogsLinked = false;
+            
+            if (activeView === 'retail' && parentWp) {
+               const parentBatches = activeBatchesMap[parentWp.id] || [];
+               parentBatches.sort((a,b) => a.id - b.id);
+               const liveParentCogs = parentBatches.length > 0 ? parentBatches[0].cost_price : (parentWp.cost_price || 0);
+               const parentWeight = parentWp.weight || 50;
+               displayCostPrice = Math.round(liveParentCogs / parentWeight);
+               isCogsLinked = true;
+            }
+
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 
@@ -2355,12 +2372,17 @@ export default function RiceControl() {
                     />
                   </div>
                   <div>
-                    <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', margin: '0 0 6px 0' }}>Cost Price (៛)</label>
+                    <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', margin: '0 0 6px 0', color: isCogsLinked ? '#b58a3d' : 'inherit' }}>
+                      {isCogsLinked ? 'Cost Price (Auto-Linked 🔗)' : 'Cost Price (៛)'}
+                    </label>
                     <input 
                       type="number"
+                      disabled={isCogsLinked}
                       className="saas-input no-spinners" 
-                      value={edits[p.id]?.cost_price ?? p.cost_price} 
+                      value={displayCostPrice} 
+                      style={{ backgroundColor: isCogsLinked ? '#f8fafc' : '#ffffff', color: isCogsLinked ? '#64748b' : '#0f172a' }}
                       onChange={(e) => {
+                        if (isCogsLinked) return; // Prevent edits if it is dynamically linked
                         const val = e.target.value === '' ? '' : Number(e.target.value);
                         setEdits(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), cost_price: val as any } }));
                       }} 
@@ -2435,11 +2457,12 @@ export default function RiceControl() {
                                 ❌ Clear Linked Bag
                               </button>
 
-                              {wpList.filter(wp => Number(wp.stock) > 0 && wp.name.toLowerCase().includes(mobileLinkSearch.toLowerCase())).length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '16px', color: '#94a3b8', fontSize: '14px' }}>No bags in stock</div>
+                              {/* 🔥 OVERSELL FIX: Allow 0 stock bags to appear in mobile search */}
+                              {wpList.filter(wp => wp.name.toLowerCase().includes(mobileLinkSearch.toLowerCase())).length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '16px', color: '#94a3b8', fontSize: '14px' }}>No bags found</div>
                               ) : (
                                 <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-                                  {wpList.filter(wp => Number(wp.stock) > 0 && wp.name.toLowerCase().includes(mobileLinkSearch.toLowerCase())).map((wp, index, arr) => (
+                                  {wpList.filter(wp => wp.name.toLowerCase().includes(mobileLinkSearch.toLowerCase())).map((wp, index, arr) => (
                                     <div 
                                       key={wp.id} 
                                       onClick={(e) => { e.preventDefault(); handleLinkWholesaleBag(p.id, wp); setMobileEditProduct({...p, linked_wholesale_id: wp.id}); setIsMobileLinkDropdownOpen(false); }} 

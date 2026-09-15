@@ -1021,7 +1021,8 @@ export default function POSPage() {
   const mixDropdownFilteredProducts = products.filter(p => {
     if (mixDropdownSearch && !p.name.toLowerCase().includes(mixDropdownSearch.toLowerCase())) return false;
     if (activeDropdown === 'bag') return p.name.includes('បាវ');
-    if (activeDropdown === 'rice1' || activeDropdown === 'rice2' || activeDropdown === 'rice3') { if (p.stock <= 0) return false; if (p.weight < 50) return false; return true; }
+    // 🔥 OVERSELL FIX: Removed "if (p.stock <= 0) return false;" so you can mix rice even if the system says 0!
+    if (activeDropdown === 'rice1' || activeDropdown === 'rice2' || activeDropdown === 'rice3') { if (p.weight < 50) return false; return true; }
     if (activeDropdown === 'target') { const isWholesale = Number(p.weight) >= 50; if (dropdownTab === 'wholesale' && !isWholesale) return false; if (dropdownTab === 'retail' && isWholesale) return false; return true; }
     return true;
   });
@@ -1536,13 +1537,9 @@ export default function POSPage() {
                 const bagsNeeded = Math.ceil(Math.abs(finalStock) / wholesaleWeight);
                 itemsNeedingBags.push({ ...p, bags_needed: bagsNeeded });
             } else if (p && pWeight < 25 && !p.linked_wholesale_id) {
-                showToast('error', 'Out of Stock', `Not enough stock for ${p.name} and no linked wholesale bag to open!`);
-                setIsProcessing(false); // 🛡️ STABILITY FIX: Unlock the UI engine before aborting!
-                return;
+                // 🔥 OVERSELL FIX: Removed the error block. Retail stock will now quietly drop into negative numbers!
             } else if (p && pWeight >= 25) {
-                showToast('error', 'Out of Stock', `Not enough stock for wholesale bag ${p.name}!`);
-                setIsProcessing(false); // 🛡️ STABILITY FIX: Unlock the UI engine before aborting!
-                return;
+                // 🔥 OVERSELL FIX: Removed the error block. Wholesale bags will now quietly drop into negative numbers!
             }
         }
     }
@@ -1581,9 +1578,11 @@ export default function POSPage() {
             const targetWholesaleId = repackSubstitutes[p.id] || p.linked_wholesale_id;
             const wholesaleProd = products.find(w => w.id === targetWholesaleId);
             
-            if (!wholesaleProd || wholesaleProd.stock < p.bags_needed) {
-                throw new Error(`Not enough stock in the selected bag to open for ${p.name}.`);
+            if (!wholesaleProd) {
+                throw new Error(`Wholesale bag not found for ${p.name}.`);
             }
+            // 🔥 OVERSELL FIX: We removed the "wholesaleProd.stock < p.bags_needed" check.
+            // The system will now happily let the wholesale bag drop to negative to fulfill the retail auto-open!
             
             const { error } = await supabase.rpc('pull_wholesale_bags', {
                 p_retail_id: p.id,
@@ -2066,7 +2065,8 @@ export default function POSPage() {
     
     if (activeTab === 'wholesale') {
       if (activeCategory === '❌ Out of Stock') return Number(p.stock) <= 0;
-      if (Number(p.stock) <= 0) return false; 
+      // 🔥 OVERSELL FIX: We removed "if (p.stock <= 0) return false;" here. 
+      // Now products with 0 or negative stock will stay permanently visible on the grid!
     }
 
     if (activeTab !== 'retail' && activeCategory !== 'All' && activeCategory !== '❌ Out of Stock') {
@@ -3230,7 +3230,7 @@ export default function POSPage() {
               
               const availableBags = products.filter(prod => 
                 Number(prod.weight) >= 50 && 
-                prod.stock >= p.bags_needed &&
+                // 🔥 OVERSELL FIX: Removed "prod.stock >= p.bags_needed" so 0-stock bags show up in the search!
                 (!searchTerm || prod.name.toLowerCase().includes(searchTerm.toLowerCase()))
               );
 
@@ -4686,7 +4686,7 @@ export default function POSPage() {
                 </div>
               </div>
               
-              {/* 🔥 UPGRADED: Link Wholesale Bag Search Portal (Only visible on Retail Tab) */}
+              {/* 🔥 UPGRADED: Link Wholesale Bag Search Portal (Exact clone of working Customer Search Modal) */}
               {activeTab === 'retail' && activeFullScreen === 'none' && (() => {
                 const linkedProd = newItem.linked_wholesale_id ? products.find(p => String(p.id) === String(newItem.linked_wholesale_id)) : null;
                 const availableBags = products.filter(p => Number(p.weight) > 1 && (!linkBagSearch || p.name.toLowerCase().includes(linkBagSearch.toLowerCase())));
