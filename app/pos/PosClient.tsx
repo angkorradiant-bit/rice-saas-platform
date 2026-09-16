@@ -906,7 +906,8 @@ export default function POSPage() {
   }
 
   async function handleProcessImport(isPayLater: boolean) {
-    if (!importForm.supplier_id || !importForm.product_id || !importForm.qty || !importForm.unit_cost) {
+    // 🔥 HSR FIX: Check strictly for empty strings so typing '0' is completely allowed!
+    if (!importForm.supplier_id || !importForm.product_id || importForm.qty === '' || importForm.unit_cost === '') {
       return showToast('error', 'Missing Data', 'Please fill in Supplier, Product, Qty, and Cost.');
     }
     setIsProcessing(true);
@@ -1058,7 +1059,11 @@ export default function POSPage() {
   const mixDropdownFilteredProducts = products.filter(p => {
     if (mixDropdownSearch && !p.name.toLowerCase().includes(mixDropdownSearch.toLowerCase())) return false;
     if (activeDropdown === 'bag') return p.name.includes('បាវ');
-    if (activeDropdown === 'rice1' || activeDropdown === 'rice2' || activeDropdown === 'rice3') { if (p.stock <= 0) return false; if (p.weight < 50) return false; return true; }
+    if (activeDropdown === 'rice1' || activeDropdown === 'rice2' || activeDropdown === 'rice3') { 
+      // 🔥 HSR FIX: Removed the "stock <= 0" block. Allow staff to mix rice even if base stock is negative/0!
+      if (p.weight < 50) return false; 
+      return true; 
+    }
     if (activeDropdown === 'target') { const isWholesale = Number(p.weight) >= 50; if (dropdownTab === 'wholesale' && !isWholesale) return false; if (dropdownTab === 'retail' && isWholesale) return false; return true; }
     return true;
   });

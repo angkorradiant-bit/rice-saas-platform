@@ -157,7 +157,8 @@ export default function CogsReportPage() {
           toDate,
           ownerTab: activeOwnerTab,
           downloadOnly: true,
-          records: minimalRecords
+          records: minimalRecords,
+          branch_id: activeBranchId // 👈 🔥 Added!
         })
       });
 
@@ -205,7 +206,8 @@ export default function CogsReportPage() {
           fromDate,
           toDate,
           ownerTab: activeOwnerTab,
-          records: minimalRecords
+          records: minimalRecords,
+          branch_id: activeBranchId // 👈 🔥 Added!
         })
       });
 

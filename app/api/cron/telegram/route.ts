@@ -10,6 +10,9 @@ const EXCHANGE_RATE = 4000
 const formatRiel = (val: number) => `${Math.round(val || 0).toLocaleString()}៛`
 const formatUSD = (val: number) => `$${Number(val || 0).toFixed(2)}`
 
+// 🔥 MULTI-TENANT FIX: Define target branch for cron execution (0 = Global HQ)
+const TARGET_BRANCH = 0;
+
 export async function GET(request: Request) {
   try {
     // 1. Optional Security Check: Verify Vercel Cron Secret
@@ -18,15 +21,12 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // 2. Validate Supabase Environment Variables (Prioritize Service Role Key for background RLS bypass)
+    // 2. Validate Supabase Environment Variables
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
     if (!supabaseUrl || !supabaseKey) {
-      return NextResponse.json(
-        { error: 'Missing Supabase URL or Key in Vercel Environment Variables' },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: 'Missing Supabase URL or Key' }, { status: 500 })
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey)
@@ -38,10 +38,7 @@ export async function GET(request: Request) {
     const sendMonthly = TELEGRAM_CONFIG.autoSendMonthly
 
     if (!botToken || !chatId) {
-      return NextResponse.json(
-        { error: 'Missing Telegram credentials in lib/telegramConfig.ts' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Missing Telegram credentials' }, { status: 400 })
     }
 
     // 4. CAMBODIA TIMEZONE DATE LOGIC (Asia/Phnom_Penh | UTC+7)
@@ -76,79 +73,115 @@ export async function GET(request: Request) {
     const tomorrowCam = getCambodiaDateParts(new Date(now.getTime() + 86400000))
     const isLastDayOfMonth = tomorrowCam.day === 1
 
-    // 5. Fetch Data from Supabase
+    // 5. 🔥 HSR DATA FETCH: Exclude voids and isolate by branch ID
     const [
       { data: invData, error: invError },
       { data: retData, error: retError },
       { data: expData, error: expError }
     ] = await Promise.all([
-      supabase.from('invoice_summaries').select('*').gte('created_at', startOfMonth),
-      supabase.from('retail_sales').select('*').gte('created_at', startOfMonth),
-      supabase.from('expenses').select('*').gte('created_at', startOfMonth)
+      supabase.from('invoice_summaries').select('*').eq('branch_id', TARGET_BRANCH).gte('created_at', startOfMonth).neq('delivery_status', 'Voided'),
+      supabase.from('retail_sales').select('*').eq('branch_id', TARGET_BRANCH).gte('created_at', startOfMonth).eq('is_voided', false),
+      supabase.from('expenses').select('*').eq('branch_id', TARGET_BRANCH).gte('created_at', startOfMonth)
     ])
 
     if (invError || retError || expError) {
-      return NextResponse.json(
-        { error: 'Database query failed', details: { invError, retError, expError } },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: 'Database query failed' }, { status: 500 })
     }
 
     const invoices = invData || []
     const retailSales = retData || []
     const expenses = expData || []
 
-    // 6. Number Crunching Engine
+    const parseOwner = (val: string) => val ? val.toLowerCase().trim() : 'unassigned';
+
+    // 6. 🔥 HSR NUMBER CRUNCHING ENGINE (100% Synced with ReportControlPage.tsx)
     const calculateSlice = (invSlice: any[], retSlice: any[], expSlice: any[]) => {
       let totalSales = 0
       let totalProfit = 0
       const profitByOwner = { Pich: 0, Jing: 0, Both: 0 }
 
       invSlice.forEach(inv => {
+        const owner = parseOwner(inv.owner);
+        if (owner === 'mom') return; // 🚫 Exclude Mom
+
         const sales = Number(inv.total_sales) || 0
         const profit = Number(inv.total_profit) || 0
         totalSales += sales
         totalProfit += profit
-        const owner = ['Pich', 'Jing'].includes(inv.owner) ? inv.owner : 'Both'
-        profitByOwner[owner as keyof typeof profitByOwner] += profit
+
+        if (owner === 'pich') profitByOwner.Pich += profit;
+        else if (owner === 'jing') profitByOwner.Jing += profit;
+        else profitByOwner.Both += profit;
       })
 
       retSlice.forEach(ret => {
+        const owner = parseOwner(ret.owner);
+        if (owner === 'mom') return; // 🚫 Exclude Mom
+
+        const customName = ret.custom_rice_type || ret.rice_type || '';
+        if (customName.includes('កក់')) return; // 🚫 Ignore Deposits for Gross Sales
+
         const qty = Number(ret.qty) || 0
         const price = Number(ret.price_per_bag) || 0
         const cogs = Number(ret.cogs_price) || 0
-        const sales = qty * price
-        const profit = (price - cogs) * qty
+
+        // 🛡️ Math.round() prevents floating point decimal leaks
+        let sales = Math.round(qty * price);
+        let profit = Math.round((price - cogs) * qty);
+
+        // 🛡️ Subtract Refunds / Discounts
+        const isNegativeItem = customName.includes('ដូរ') || customName.includes('បញ្ចុះតម្លៃ');
+        if (isNegativeItem) {
+           sales = -Math.abs(sales);
+           profit = -Math.abs(profit);
+        }
+
         totalSales += sales
         totalProfit += profit
-        profitByOwner.Both += profit
+
+        if (owner === 'pich') profitByOwner.Pich += profit;
+        else if (owner === 'jing') profitByOwner.Jing += profit;
+        else profitByOwner.Both += profit;
       })
 
+      // 🔥 Split expenses into Business vs Personal
       const expenseBySpender = {
-        Pich: { riel: 0, usd: 0 },
-        Jing: { riel: 0, usd: 0 },
-        Both: { riel: 0, usd: 0 }
+        Pich: { bizRiel: 0, bizUsd: 0, persRiel: 0, persUsd: 0 },
+        Jing: { bizRiel: 0, bizUsd: 0, persRiel: 0, persUsd: 0 },
+        Both: { bizRiel: 0, bizUsd: 0, persRiel: 0, persUsd: 0 }
       }
-      let totalExpRiel = 0
-      let totalExpUsd = 0
-      const categoryBreakdown: Record<string, { riel: number; usd: number }> = {}
+
+      let totalBizExpRiel = 0, totalBizExpUsd = 0;
+      let totalPersExpRiel = 0, totalPersExpUsd = 0;
 
       expSlice.forEach(exp => {
+        const spender = parseOwner(exp.spender);
+        if (spender === 'mom') return; // 🚫 Exclude Mom
+
         const riel = Number(exp.amount_riel) || 0
         const usd = Number(exp.amount_usd) || 0
-        const spender = ['Pich', 'Jing'].includes(exp.spender) ? exp.spender : 'Both'
-        expenseBySpender[spender as keyof typeof expenseBySpender].riel += riel
-        expenseBySpender[spender as keyof typeof expenseBySpender].usd += usd
-        totalExpRiel += riel
-        totalExpUsd += usd
 
-        const cat = exp.category || exp.description || 'Uncategorized'
-        if (!categoryBreakdown[cat]) categoryBreakdown[cat] = { riel: 0, usd: 0 }
-        categoryBreakdown[cat].riel += riel
-        categoryBreakdown[cat].usd += usd
+        let expKey: 'Pich' | 'Jing' | 'Both' = 'Both';
+        if (spender === 'pich') expKey = 'Pich';
+        else if (spender === 'jing') expKey = 'Jing';
+
+        const type = (exp.description || '').toLowerCase()
+        const isBiz = type === 'business' || type === 'biz' || type === 'staff'
+
+        if (isBiz) {
+          expenseBySpender[expKey].bizRiel += riel
+          expenseBySpender[expKey].bizUsd += usd
+          totalBizExpRiel += riel
+          totalBizExpUsd += usd
+        } else {
+          expenseBySpender[expKey].persRiel += riel
+          expenseBySpender[expKey].persUsd += usd
+          totalPersExpRiel += riel
+          totalPersExpUsd += usd
+        }
       })
 
-      return { totalSales, totalProfit, profitByOwner, expenseBySpender, totalExpRiel, totalExpUsd, categoryBreakdown }
+      return { totalSales, totalProfit, profitByOwner, expenseBySpender, totalBizExpRiel, totalBizExpUsd, totalPersExpRiel, totalPersExpUsd }
     }
 
     const month = calculateSlice(
@@ -171,39 +204,51 @@ export async function GET(request: Request) {
       const cleanUSD = (val: number) => (val === 0 ? '$0' : formatUSD(val))
 
       const dailyText =
-`📊 RICE BUSINESS REPORT
+`📊 RICE BUSINESS REPORT (Global HQ)
 
 📆 THIS MONTH
 💰 Sales      ${formatRiel(month.totalSales)}
 📈 Profit     ${formatRiel(month.totalProfit)}
-💸 Expense    ${formatRiel(month.totalExpRiel)} / ${cleanUSD(month.totalExpUsd)}
+🏢 Biz Exp    ${formatRiel(month.totalBizExpRiel)} / ${cleanUSD(month.totalBizExpUsd)}
+🏠 Pers Exp   ${formatRiel(month.totalPersExpRiel)} / ${cleanUSD(month.totalPersExpUsd)}
 
 👤 MONTH PROFIT
 🟢 Pich       ${formatRiel(month.profitByOwner.Pich)}
 🔵 Jing       ${formatRiel(month.profitByOwner.Jing)}
 🟡 Both       ${formatRiel(month.profitByOwner.Both)}
 
-💸 MONTH EXPENSE
-🟢 Pich       ${formatRiel(month.expenseBySpender.Pich.riel)} / ${cleanUSD(month.expenseBySpender.Pich.usd)}
-🔵 Jing       ${formatRiel(month.expenseBySpender.Jing.riel)} / ${cleanUSD(month.expenseBySpender.Jing.usd)}
-🟡 Both       ${formatRiel(month.expenseBySpender.Both.riel)} / ${cleanUSD(month.expenseBySpender.Both.usd)}
+🏢 MONTH BIZ EXPENSE
+🟢 Pich       ${formatRiel(month.expenseBySpender.Pich.bizRiel)} / ${cleanUSD(month.expenseBySpender.Pich.bizUsd)}
+🔵 Jing       ${formatRiel(month.expenseBySpender.Jing.bizRiel)} / ${cleanUSD(month.expenseBySpender.Jing.bizUsd)}
+🟡 Both       ${formatRiel(month.expenseBySpender.Both.bizRiel)} / ${cleanUSD(month.expenseBySpender.Both.bizUsd)}
+
+🏠 MONTH PERS EXPENSE
+🟢 Pich       ${formatRiel(month.expenseBySpender.Pich.persRiel)} / ${cleanUSD(month.expenseBySpender.Pich.persUsd)}
+🔵 Jing       ${formatRiel(month.expenseBySpender.Jing.persRiel)} / ${cleanUSD(month.expenseBySpender.Jing.persUsd)}
+🟡 Both       ${formatRiel(month.expenseBySpender.Both.persRiel)} / ${cleanUSD(month.expenseBySpender.Both.persUsd)}
 
 ━━━━━━━━━━━━━━━
 
 📅 TODAY
 💰 Sales      ${formatRiel(today.totalSales)}
 📈 Profit     ${formatRiel(today.totalProfit)}
-💸 Expense    ${formatRiel(today.totalExpRiel)} / ${cleanUSD(today.totalExpUsd)}
+🏢 Biz Exp    ${formatRiel(today.totalBizExpRiel)} / ${cleanUSD(today.totalBizExpUsd)}
+🏠 Pers Exp   ${formatRiel(today.totalPersExpRiel)} / ${cleanUSD(today.totalPersExpUsd)}
 
 👤 TODAY PROFIT
 🟢 Pich       ${formatRiel(today.profitByOwner.Pich)}
 🔵 Jing       ${formatRiel(today.profitByOwner.Jing)}
 🟡 Both       ${formatRiel(today.profitByOwner.Both)}
 
-💸 TODAY EXPENSE
-🟢 Pich       ${formatRiel(today.expenseBySpender.Pich.riel)} / ${cleanUSD(today.expenseBySpender.Pich.usd)}
-🔵 Jing       ${formatRiel(today.expenseBySpender.Jing.riel)} / ${cleanUSD(today.expenseBySpender.Jing.usd)}
-🟡 Both       ${formatRiel(today.expenseBySpender.Both.riel)} / ${cleanUSD(today.expenseBySpender.Both.usd)}`
+🏢 TODAY BIZ EXPENSE
+🟢 Pich       ${formatRiel(today.expenseBySpender.Pich.bizRiel)} / ${cleanUSD(today.expenseBySpender.Pich.bizUsd)}
+🔵 Jing       ${formatRiel(today.expenseBySpender.Jing.bizRiel)} / ${cleanUSD(today.expenseBySpender.Jing.bizUsd)}
+🟡 Both       ${formatRiel(today.expenseBySpender.Both.bizRiel)} / ${cleanUSD(today.expenseBySpender.Both.bizUsd)}
+
+🏠 TODAY PERS EXPENSE
+🟢 Pich       ${formatRiel(today.expenseBySpender.Pich.persRiel)} / ${cleanUSD(today.expenseBySpender.Pich.persUsd)}
+🔵 Jing       ${formatRiel(today.expenseBySpender.Jing.persRiel)} / ${cleanUSD(today.expenseBySpender.Jing.persUsd)}
+🟡 Both       ${formatRiel(today.expenseBySpender.Both.persRiel)} / ${cleanUSD(today.expenseBySpender.Both.persUsd)}`
 
       const dailyRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
@@ -224,7 +269,9 @@ export async function GET(request: Request) {
       const baseUrl = rawBaseUrl.replace(/\/$/, '')
 
       const monthlyRes = await fetch(`${baseUrl}/api/telegram/send-monthly-pdf`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch_id: TARGET_BRANCH }) // 🔥 Passes Multi-Tenant Security context
       })
 
       monthlyTelegramResponse = await monthlyRes.json()
@@ -244,7 +291,8 @@ export async function GET(request: Request) {
         cogsMomResult = await generateAndSendCogsReport({
           fromDate: todayIsoStr,
           toDate: todayIsoStr,
-          ownerTab: 'mom'
+          ownerTab: 'mom',
+          branch_id: TARGET_BRANCH // 🔥 Passes Multi-Tenant Security context
         })
       } catch (err: any) {
         console.error('Failed to send Mom COGS PDF in Cron:', err.message)
@@ -254,7 +302,8 @@ export async function GET(request: Request) {
         cogsOthersResult = await generateAndSendCogsReport({
           fromDate: todayIsoStr,
           toDate: todayIsoStr,
-          ownerTab: 'others'
+          ownerTab: 'others',
+          branch_id: TARGET_BRANCH // 🔥 Passes Multi-Tenant Security context
         })
       } catch (err: any) {
         console.error('Failed to send Others COGS PDF in Cron:', err.message)

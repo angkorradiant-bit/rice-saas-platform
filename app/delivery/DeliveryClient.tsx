@@ -316,6 +316,7 @@ export default function DeliveryPage() {
 
       try {
         let message = `📦 *Delivery Payment Update*\n`;
+        message += `🏬 *Branch ID:* ${activeBranchId}\n`; // 👈 🔥 ADD THIS LINE
         message += `📅 *Date:* ${new Date().toLocaleDateString('en-GB')}\n`;
         message += `👤 *Customer name:* ${d.customer_name}\n`;
         message += `🚚 *Delivery Status:* Delivered\n`;

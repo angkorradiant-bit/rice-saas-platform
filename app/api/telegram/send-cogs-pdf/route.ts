@@ -9,7 +9,8 @@ export const maxDuration = 30;
 
 export async function POST(request: NextRequest) {
   try {
-    const { fromDate, toDate, ownerTab, downloadOnly, records } = await request.json();
+    // 🔥 MULTI-TENANT FIX: Added branch_id to the extraction
+    const { fromDate, toDate, ownerTab, downloadOnly, records, branch_id } = await request.json();
 
     if (!fromDate || !toDate) {
       return NextResponse.json({ error: 'Date range required' }, { status: 400 });
@@ -22,7 +23,8 @@ export async function POST(request: NextRequest) {
       toDate,
       ownerTab: validOwnerTab,
       downloadOnly: !!downloadOnly,
-      clientRecords: records || null // 🔥 Passes UI records directly to the PDF printer
+      clientRecords: records || null, // 🔥 Passes UI records directly to the PDF printer
+      branch_id: branch_id || 0       // 🔥 MULTI-TENANT FIX: Securely pass the branch context!
     });
 
     if (downloadOnly && result?.pdfBuffer) {

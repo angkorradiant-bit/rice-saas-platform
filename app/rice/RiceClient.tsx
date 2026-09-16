@@ -291,7 +291,7 @@ export default function RiceControl() {
       const retailItems = products.filter(p => !p.is_archived && Number(p.stock) > 0 && Number(p.weight) < 25);
       const wholesaleItems = products.filter(p => !p.is_archived && Number(p.stock) > 0 && Number(p.weight) >= 25);
 
-      let msg = `📊 *CURRENT INVENTORY REPORT*\n📅 Date: ${new Date().toLocaleString('en-GB')}\n\n`;
+     let msg = `📊 *CURRENT INVENTORY REPORT*\n🏬 Branch ID: ${activeBranchId}\n📅 Date: ${new Date().toLocaleString('en-GB')}\n\n`; // 👈 🔥 ADDED BRANCH ID
 
       msg += `🛍️ *RETAIL STOCK (< 25kg)*\n`;
       if(retailItems.length === 0) msg += `- None\n`;
