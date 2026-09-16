@@ -79,8 +79,8 @@ export default function DashboardPage() {
       buildQNarrow('products', 'id, name, stock, cost_price, weight, linked_wholesale_id').order('id'),
       buildQNarrow('accounts_payable', 'id, amount_riel, amount_usd, status').eq('status', 'Unpaid'),
       buildQNarrow('cogs_settlements', 'payment_method, paid_amount_riel, paid_amount_usd, owner_name'),
-      buildQNarrow('inventory_batches', 'id, product_id, remaining_qty, cost_price, created_at').gt('remaining_qty', 0),
-      buildQNarrow('invoice_payments', 'invoice_id, payment_method, amount_paid_riel, amount_paid_usd, recorded_by, payment_date').eq('is_voided', false) 
+      buildQNarrow('inventory_batches', 'id, product_id, remaining_qty, cost_price, created_at').eq('is_hidden', false), // 🔥 HSR FIX: Fetch all active batches (even negative ones), completely ignoring hidden ones
+      buildQNarrow('invoice_payments', 'invoice_id, payment_method, amount_paid_riel, amount_paid_usd, recorded_by, payment_date').eq('is_voided', false)
     ]);
 
     setWholesaleSales(salesData || []); 
@@ -330,7 +330,8 @@ export default function DashboardPage() {
         if (p.linked_wholesale_id) {
           const parent = inventoryList.find(wp => wp.id === p.linked_wholesale_id);
           if (parent) {
-            const pBatches = priceHistory.filter((b: any) => b.product_id === parent.id && Number(b.remaining_qty) > 0);
+            // 🔥 HSR FIX: Removed the "> 0" filter here. It will now grab the active price tier even if the wholesale bag has dropped to 0 or negative!
+            const pBatches = priceHistory.filter((b: any) => b.product_id === parent.id);
             pBatches.sort((a: any, b: any) => new Date((a as any).created_at).getTime() - new Date((b as any).created_at).getTime());
             const liveParentCogs = pBatches.length > 0 ? Number(pBatches[0].cost_price) : Number(parent.cost_price || 0);
             

@@ -268,13 +268,15 @@ export async function generateAndSendCogsReport({
   toDate,
   ownerTab,
   downloadOnly = false,
-  clientRecords = null
+  clientRecords = null,
+  branch_id = 0 // 👈 🔥 Added to arguments
 }: {
   fromDate: string;
   toDate: string;
   ownerTab: 'mom' | 'others';
   downloadOnly?: boolean;
   clientRecords?: any[] | null;
+  branch_id?: number; // 👈 🔥 Added to types
 }) {
   const isMomTab = ownerTab === 'mom';
   let rawSales: any[] = [];
@@ -296,8 +298,9 @@ export async function generateAndSendCogsReport({
     const endIso = dEnd.toISOString().substring(0, 10);
 
     const [{ data: sales }, { data: retailSales }] = await Promise.all([
-      supabase.from('sales').select('*').gte('created_at', `${startIso}T00:00:00`).lte('created_at', `${endIso}T23:59:59`),
-      supabase.from('retail_sales').select('*').gte('created_at', `${startIso}T00:00:00`).lte('created_at', `${endIso}T23:59:59`)
+      // 🔥 MULTI-TENANT FIX: Added .eq('branch_id', branch_id)
+      supabase.from('sales').select('*').eq('branch_id', branch_id).gte('created_at', `${startIso}T00:00:00`).lte('created_at', `${endIso}T23:59:59`),
+      supabase.from('retail_sales').select('*').eq('branch_id', branch_id).gte('created_at', `${startIso}T00:00:00`).lte('created_at', `${endIso}T23:59:59`)
     ]);
 
     rawSales = [...(sales || []), ...(retailSales || [])].filter((s) => {

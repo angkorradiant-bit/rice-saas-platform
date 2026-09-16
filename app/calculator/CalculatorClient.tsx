@@ -154,7 +154,7 @@ async function fetchBatches() {
 const { data } = await supabase.from('inventory_batches')
 .select('*')
 .eq('branch_id', activeBranchId)
-.gt('remaining_qty', 0)
+.eq('is_hidden', false) // 🔥 HSR FIX: Fetch active batches, even if they are negative!
 .order('id', { ascending: true });
 if (data) {
 const bMap: Record<number, InventoryBatch[]> = {}
@@ -209,7 +209,7 @@ if (activeDropdown === 'bag') {
 return p.name.includes('បាវ');
 }
 if (activeDropdown === 'rice1' || activeDropdown === 'rice2' || activeDropdown === 'rice3') {
-if (p.stock <= 0) return false;
+// 🔥 HSR FIX: Removed the stock <= 0 block! Allow negative/zero ingredients!
 if (p.weight < 50) return false;
 return true;
 }
@@ -284,21 +284,6 @@ const handleExecuteInventorySync = async () => {
   if (!bagId || qtyToDeductBag <= 0) {
     showToast('error', 'Missing Bag', 'Please select a packaging bag and enter the quantity.');
     return;
-  }
-
-  // 🔥 STRICT STOCK VALIDATION (Prevents Negative Inventory)
-  const requiredStock: Record<number, { name: string, needed: number, available: number }> = {};
-  if (rice1 && qtyToDeduct1 > 0) requiredStock[rice1.id] = { name: rice1.name, needed: (requiredStock[rice1.id]?.needed || 0) + qtyToDeduct1, available: Number(rice1.stock) };
-  if (rice2 && qtyToDeduct2 > 0) requiredStock[rice2.id] = { name: rice2.name, needed: (requiredStock[rice2.id]?.needed || 0) + qtyToDeduct2, available: Number(rice2.stock) };
-  if (showThirdRice && rice3 && qtyToDeduct3 > 0) requiredStock[rice3.id] = { name: rice3.name, needed: (requiredStock[rice3.id]?.needed || 0) + qtyToDeduct3, available: Number(rice3.stock) };
-  if (bagProd && qtyToDeductBag > 0) requiredStock[bagProd.id] = { name: bagProd.name, needed: (requiredStock[bagProd.id]?.needed || 0) + qtyToDeductBag, available: Number(bagProd.stock) };
-
-  for (const prodId in requiredStock) {
-    const req = requiredStock[prodId];
-    if (req.needed > req.available) {
-        showToast('error', 'Insufficient Stock', `Not enough ${req.name}. You need ${req.needed} but only have ${req.available} in stock.`);
-        return;
-    }
   }
 
   setIsProcessing(true);

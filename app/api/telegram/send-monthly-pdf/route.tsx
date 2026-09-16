@@ -557,8 +557,24 @@ export async function POST(request: Request) {
       })
 
       retSlice.forEach(ret => {
-        const rev = (Number(ret.qty) || 0) * (Number(ret.price_per_bag) || 0)
-        const prof = ((Number(ret.price_per_bag) || 0) - (Number(ret.cogs_price) || 0)) * (Number(ret.qty) || 0)
+        const customName = ret.custom_rice_type || ret.rice_type || '';
+        // 🔥 HSR FIX: Ignore deposits for Gross Sales
+        if (customName.includes('កក់')) return;
+
+        const qty = Number(ret.qty) || 0;
+        const price = Number(ret.price_per_bag) || 0;
+        const cogs = Number(ret.cogs_price) || 0;
+
+        // 🔥 HSR FIX: Apply Math.round() and subtract refunds/discounts!
+        let rev = Math.round(qty * price);
+        let prof = Math.round((price - cogs) * qty);
+
+        const isNegativeItem = customName.includes('ដូរ') || customName.includes('បញ្ចុះតម្លៃ');
+        if (isNegativeItem) {
+           rev = -Math.abs(rev);
+           prof = -Math.abs(prof);
+        }
+
         totalSales += rev; totalProfit += prof; bothSales += rev; bothProfit += prof
       })
 
@@ -616,12 +632,27 @@ export async function POST(request: Request) {
       const map: Record<string, { name: string, qty: number, profit: number }> = {}
       dataSet.filter(s => isMTD(s.created_at)).forEach(sale => {
         const name = sale.custom_rice_type || sale.rice_type || 'Unknown'
+        // 🔥 HSR FIX: Ignore deposits for Top Sellers
+        if (name.includes('កក់')) return;
+
         const qty = Number(sale.qty || 0)
-        const profit = (Number(sale.price_per_bag || 0) - Number(sale.cogs_price || 0)) * qty
+        const price = Number(sale.price_per_bag || 0);
+        const cogs = Number(sale.cogs_price || 0);
+        
+        // 🔥 HSR FIX: Round and subtract
+        let profit = Math.round((price - cogs) * qty);
+        let finalQty = qty;
+
+        const isNegativeItem = name.includes('ដូរ') || name.includes('បញ្ចុះតម្លៃ');
+        if (isNegativeItem) {
+            profit = -Math.abs(profit);
+            finalQty = -Math.abs(finalQty);
+        }
+
         if (!map[name]) map[name] = { name, qty: 0, profit: 0 }
-        map[name].qty += qty; map[name].profit += profit
+        map[name].qty += finalQty; map[name].profit += profit
       })
-      return { topByQty: Object.values(map).sort((a, b) => b.qty - a.qty).slice(0, 3) }
+      return { topByQty: Object.values(map).filter(item => item.qty > 0 || item.profit > 0).sort((a, b) => b.qty - a.qty).slice(0, 3) }
     }
 
     const wholesaleTop = getTop(wholesaleSales)
@@ -631,10 +662,28 @@ export async function POST(request: Request) {
       const salesArr = new Array(31).fill(0); const profArr = new Array(31).fill(0)
       const allSales = [...wholesaleSales, ...retailSales].filter(s => isTarget(s.created_at) && parseOwnerSafe(s.owner) !== 'mom')
       allSales.forEach(s => {
+        const customName = s.custom_rice_type || s.rice_type || '';
+        // 🔥 HSR FIX: Ignore deposits for daily charts
+        if (customName.includes('កក់')) return;
+
         const idx = new Date(s.created_at).getDate() - 1
         if (idx >= 0 && idx < 31) {
-          salesArr[idx] += (Number(s.qty || 0) * Number(s.price_per_bag || 0))
-          profArr[idx] += ((Number(s.price_per_bag || 0) - Number(s.cogs_price || 0)) * Number(s.qty || 0))
+          const qty = Number(s.qty || 0);
+          const price = Number(s.price_per_bag || 0);
+          const cogs = Number(s.cogs_price || 0);
+          
+          // 🔥 HSR FIX: Round and subtract
+          let rev = Math.round(qty * price);
+          let prof = Math.round((price - cogs) * qty);
+
+          const isNegativeItem = customName.includes('ដូរ') || customName.includes('បញ្ចុះតម្លៃ');
+          if (isNegativeItem) {
+              rev = -Math.abs(rev);
+              prof = -Math.abs(prof);
+          }
+
+          salesArr[idx] += rev;
+          profArr[idx] += prof;
         }
       })
       return { salesArr, profArr }
