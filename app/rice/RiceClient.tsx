@@ -211,6 +211,7 @@ export default function RiceControl() {
   
   const [editingHistoryId, setEditingHistoryId] = useState<number | null>(null)
   const [historyEdits, setHistoryEdits] = useState<Record<number, Partial<InventoryBatch>>>({})
+  const [showHiddenBatches, setShowHiddenBatches] = useState(false) // 🔥 HSR FIX: Toggle State
 
   // --- DRAG HANDLERS FOR CATEGORIES (DND-KIT) ---
   const sensors = useSensors(
@@ -257,6 +258,9 @@ export default function RiceControl() {
   const triggerStockAlert = async (productName: string = 'Unknown Product', currentStock: number = 0, minStockLevel: number = 0) => {
     const stockNum = Number(currentStock) || 0;
     const minNum = Number(minStockLevel) || 0;
+
+    // 🛑 STOP ALERT IF STOCK IS NEGATIVE (Oversold)
+    if (stockNum < 0) return;
 
     // 🔥 RELIABILITY FIX: Safely cast to Numbers to prevent string-comparison bypasses
     if (stockNum > minNum) return;
@@ -572,8 +576,8 @@ export default function RiceControl() {
     const { data } = await supabase.from('inventory_batches')
       .select('*')
       .eq('branch_id', activeBranchId)
-      .gt('remaining_qty', 0) 
-      .order('id', { ascending: true }); 
+      .eq('is_hidden', false) // 🔥 HSR FIX: Allow negative stock, filter by visibility
+      .order('id', { ascending: true });
 
     if (data) {
       const bMap: Record<number, InventoryBatch[]> = {}
@@ -597,12 +601,13 @@ export default function RiceControl() {
       .select('*')
       .eq('product_id', product.id)
       .eq('branch_id', activeBranchId)
-      .gt('remaining_qty', 0)
+      // 🔥 HSR FIX: Fetch ALL batches (hidden and visible, negative and positive)
       .order('id', { ascending: true });
 
     setHistoryModal({ isOpen: true, product, data: importLog || [], activeBatches: activeBatches || [] })
     setEditingHistoryId(null);
     setHistoryEdits({});
+    setShowHiddenBatches(false); // Reset to Active view when opening
   }
 
   const handleSaveHistory = async (batchId: number) => {
@@ -623,12 +628,12 @@ export default function RiceControl() {
     if (edits.remaining_qty !== undefined) payload.remaining_qty = newQty;
     if (edits.cost_price !== undefined) payload.cost_price = Number(edits.cost_price) || 0;
 
-    // 🔒 SECURITY FIX: Enforce branch isolation on batch update
+    // 1. Update inventory_batches
     const { error } = await supabase.from('inventory_batches').update(payload).eq('id', batchId).eq('branch_id', activeBranchId);
     
     if (!error) {
+      // 2. Adjust master product stock if quantity changed
       if (qtyDifference !== 0) {
-        // 🔒 SECURITY FIX: Enforce branch isolation on RPC stock adjustment
         await supabase.rpc('adjust_product_stock', { 
           p_product_id: targetProduct.id, 
           p_quantity: qtyDifference,
@@ -643,13 +648,41 @@ export default function RiceControl() {
         }
       }
       
-      const { data: updatedBatches } = await supabase.from('inventory_batches')
-        .select('*').eq('product_id', targetProduct.id).eq('branch_id', activeBranchId).gt('remaining_qty', 0).order('id', { ascending: true });
+      // 3. 🔥 AUTO-SYNC: Also update the corresponding recent import record in the `imports` table!
+      const { data: latestImport } = await supabase.from('imports')
+        .select('id, qty, unit_cost')
+        .eq('product_id', targetProduct.id)
+        .eq('branch_id', activeBranchId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestImport) {
+        const importPayload: any = {};
+        if (edits.remaining_qty !== undefined) importPayload.qty = newQty;
+        if (edits.cost_price !== undefined) importPayload.unit_cost = Number(edits.cost_price) || 0;
+        
+        const finalQty = edits.remaining_qty !== undefined ? newQty : latestImport.qty;
+        const finalCost = edits.cost_price !== undefined ? Number(edits.cost_price) : latestImport.unit_cost;
+        importPayload.total_cost = finalQty * finalCost;
+
+        await supabase.from('imports').update(importPayload).eq('id', latestImport.id).eq('branch_id', activeBranchId);
+      }
       
-      setHistoryModal(prev => ({...prev, activeBatches: updatedBatches || []}));
+      const { data: updatedBatches } = await supabase.from('inventory_batches')
+        .select('*').eq('product_id', targetProduct.id).eq('branch_id', activeBranchId).order('id', { ascending: true });
+      
+      const { data: updatedImports } = await supabase.from('imports')
+        .select('*, suppliers(name)')
+        .eq('product_id', targetProduct.id)
+        .eq('branch_id', activeBranchId)
+        .order('created_at', { ascending: false });
+
+      setHistoryModal(prev => ({...prev, activeBatches: updatedBatches || [], data: updatedImports || []}));
       setEditingHistoryId(null);
-      showToast('success', 'Batch Updated', 'Inventory limits adjusted successfully.');
+      showToast('success', 'Batch & Import Updated', 'Shelf stock and permanent import record synced successfully.');
       fetchProducts();
+      fetchImports();
     } else {
       showToast('error', 'Update Failed', error.message);
     }
@@ -696,6 +729,27 @@ export default function RiceControl() {
     } else {
       showToast('error', 'Delete Failed', error.message);
     }
+  }
+
+  // 🔥 HSR FIX: Manual Hide/Unhide Function
+  const handleToggleBatchVisibility = async (batchId: number, currentStatus: boolean) => {
+    setIsProcessing(true);
+    const { error } = await supabase.from('inventory_batches')
+      .update({ is_hidden: !currentStatus })
+      .eq('id', batchId)
+      .eq('branch_id', activeBranchId);
+    
+    if (!error) {
+      setHistoryModal(prev => ({
+        ...prev,
+        activeBatches: prev.activeBatches.map(b => b.id === batchId ? { ...b, is_hidden: !currentStatus } : b)
+      }));
+      fetchBatches(); // Sync master UI
+      showToast('success', 'Batch Updated', !currentStatus ? 'Batch successfully archived.' : 'Batch successfully restored.');
+    } else {
+      showToast('error', 'Update Failed', error.message);
+    }
+    setIsProcessing(false);
   }
 
   const handleVoidImport = async (importId: number) => {
@@ -811,7 +865,8 @@ export default function RiceControl() {
   async function handleProcessImport(isPayLater: boolean) {
     if (isImportingRef.current) return;
 
-    if (!importForm.supplier_id || !importForm.product_id || !importForm.qty || !importForm.unit_cost) {
+    // 🔥 HSR FIX: 0-Qty Import Unlock. Strictly check for empty strings instead of falsy values.
+    if (!importForm.supplier_id || !importForm.product_id || importForm.qty === '' || importForm.unit_cost === '') {
       return showToast('error', 'Missing Data', 'Please fill in Supplier, Product, Qty, and Cost.');
     }
 
@@ -2695,63 +2750,78 @@ export default function RiceControl() {
         
         <div style={{ overflowY: 'auto', flex: 1, paddingRight: '8px', maxHeight: '50vh' }}>
           
-          {/* SECTION 1: Active Shelved Batches (These decrease) */}
-          <h3 className="saas-card-title" style={{ marginBottom: '12px' }}>🟢 Active Batches on Shelf</h3>
-          {historyModal.activeBatches.length === 0 ? (
-            <p style={{ color: '#ef4444', fontSize: '14px', marginBottom: '24px' }}>No active batches remaining. Stock is empty.</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '24px' }}>
-              {historyModal.activeBatches.map((b, index) => {
-                const isEditing = editingHistoryId === b.id;
-                const editData = historyEdits[b.id] || { remaining_qty: b.remaining_qty, cost_price: b.cost_price };
-                let batchLabel = index === 0 ? '1st Batch (Current)' : index === 1 ? '2nd Batch' : `${index + 1}th Batch`;
+          {/* SECTION 1: Shelved Batches (HSR Toggle View) */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h3 className="saas-card-title" style={{ margin: 0 }}>{showHiddenBatches ? '🙈 Hidden / Depleted Archive' : '🟢 Active Batches on Shelf'}</h3>
+            <div style={{ background: '#f1f5f9', padding: '4px', borderRadius: '8px', display: 'flex', gap: '4px' }}>
+              <button onClick={() => setShowHiddenBatches(false)} style={{ padding: '6px 12px', fontSize: '12px', background: !showHiddenBatches ? '#ffffff' : 'transparent', color: !showHiddenBatches ? '#0f172a' : '#64748b', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: !showHiddenBatches ? 'bold' : 'normal', boxShadow: !showHiddenBatches ? '0 1px 2px rgba(0,0,0,0.05)' : 'none' }}>Active</button>
+              <button onClick={() => setShowHiddenBatches(true)} style={{ padding: '6px 12px', fontSize: '12px', background: showHiddenBatches ? '#ffffff' : 'transparent', color: showHiddenBatches ? '#0f172a' : '#64748b', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: showHiddenBatches ? 'bold' : 'normal', boxShadow: showHiddenBatches ? '0 1px 2px rgba(0,0,0,0.05)' : 'none' }}>Hidden</button>
+            </div>
+          </div>
+          
+          {(() => {
+            const filteredBatches = historyModal.activeBatches.filter(b => !!(b as any).is_hidden === showHiddenBatches);
+            if (filteredBatches.length === 0) {
+              return <p style={{ color: '#94a3b8', fontSize: '14px', marginBottom: '24px' }}>No {showHiddenBatches ? 'hidden' : 'active'} batches found.</p>;
+            }
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '24px' }}>
+                {filteredBatches.map((b, index) => {
+                  const isEditing = editingHistoryId === b.id;
+                  const editData = historyEdits[b.id] || { remaining_qty: b.remaining_qty, cost_price: b.cost_price };
+                  let batchLabel = showHiddenBatches ? 'Archived Batch' : (index === 0 ? '1st Batch (Current)' : index === 1 ? '2nd Batch' : `${index + 1}th Batch`);
 
-                return (
-                  <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: index === 0 ? '#f0fdf4' : '#f8fafc', border: isEditing ? '1px solid #b58a3d' : (index === 0 ? '1px solid #bbf7d0' : '1px solid #e2e8f0'), borderRadius: '8px', transition: 'all 0.2s' }}>
-                    {isEditing ? (
-                      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', flex: 1 }}>
-                        <div style={{ flex: '1 1 80px' }}>
-                          <label className="saas-card-title" style={{ fontSize: '11px', margin: '0 0 4px 0' }}>Remaining Qty</label>
-                          <input autoFocus type="number" className="saas-input no-spinners" value={editData.remaining_qty} onChange={e => setHistoryEdits({...historyEdits, [b.id]: {...editData, remaining_qty: Number(e.target.value)}})} onKeyDown={e => e.key === 'Enter' && handleSaveHistory(b.id)} style={{ padding: '6px' }} />
+                  return (
+                    <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: showHiddenBatches ? '#f8fafc' : (index === 0 ? '#f0fdf4' : '#f8fafc'), border: isEditing ? '1px solid #b58a3d' : (showHiddenBatches ? '1px solid #cbd5e1' : (index === 0 ? '1px solid #bbf7d0' : '1px solid #e2e8f0')), borderRadius: '8px', transition: 'all 0.2s', opacity: showHiddenBatches ? 0.85 : 1 }}>
+                      {isEditing ? (
+                        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', flex: 1 }}>
+                          <div style={{ flex: '1 1 80px' }}>
+                            <label className="saas-card-title" style={{ fontSize: '11px', margin: '0 0 4px 0' }}>Remaining Qty</label>
+                            <input autoFocus type="number" className="saas-input no-spinners" value={editData.remaining_qty} onChange={e => setHistoryEdits({...historyEdits, [b.id]: {...editData, remaining_qty: Number(e.target.value)}})} onKeyDown={e => e.key === 'Enter' && handleSaveHistory(b.id)} style={{ padding: '6px' }} />
+                          </div>
+                          <div style={{ flex: '1 1 100px' }}>
+                            <label className="saas-card-title" style={{ fontSize: '11px', margin: '0 0 4px 0' }}>Cost (៛)</label>
+                            <input type="number" className="saas-input no-spinners" value={editData.cost_price} onChange={e => setHistoryEdits({...historyEdits, [b.id]: {...editData, cost_price: Number(e.target.value)}})} onKeyDown={e => e.key === 'Enter' && handleSaveHistory(b.id)} style={{ padding: '6px' }} />
+                          </div>
                         </div>
-                        <div style={{ flex: '1 1 100px' }}>
-                          <label className="saas-card-title" style={{ fontSize: '11px', margin: '0 0 4px 0' }}>Cost (៛)</label>
-                          <input type="number" className="saas-input no-spinners" value={editData.cost_price} onChange={e => setHistoryEdits({...historyEdits, [b.id]: {...editData, cost_price: Number(e.target.value)}})} onKeyDown={e => e.key === 'Enter' && handleSaveHistory(b.id)} style={{ padding: '6px' }} />
-                        </div>
-                      </div>
-                    ) : (
-                      <div>
-                        <div style={{ fontWeight: 'bold', color: index === 0 ? '#15803d' : '#0f172a' }}>{batchLabel}</div>
-                        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Arrived: {new Date((b as any).created_at).toLocaleDateString()}</div>
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-                      {!isEditing && (
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: 'bold', color: '#b58a3d', fontSize: '16px' }}>{b.remaining_qty} Bags Left</div>
-                          <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>Cost: {formatRiel(b.cost_price)}</div>
+                      ) : (
+                        <div>
+                          <div style={{ fontWeight: 'bold', color: showHiddenBatches ? '#475569' : (index === 0 ? '#15803d' : '#0f172a') }}>{batchLabel}</div>
+                          <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Arrived: {new Date((b as any).created_at).toLocaleDateString()}</div>
                         </div>
                       )}
-                      <div style={{ display: 'flex', gap: '8px', marginTop: isEditing ? '20px' : '8px' }}>
-                        {isEditing ? (
-                          <>
-                            <button onClick={() => handleSaveHistory(b.id)} className="saas-btn saas-btn-primary" style={{ padding: '6px 12px', fontSize: '12px' }}>Save</button>
-                            <button onClick={() => setEditingHistoryId(null)} className="saas-btn saas-btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>Cancel</button>
-                          </>
-                        ) : (
-                          <>
-                            <button onClick={() => { setEditingHistoryId(b.id); setHistoryEdits({ [b.id]: { remaining_qty: b.remaining_qty, cost_price: b.cost_price } }); }} className="saas-btn" style={{ padding: '4px 8px', background: '#e0f2fe', color: '#0284c7', fontSize: '12px' }}>✏️ Edit</button>
-                            <button onClick={() => handleDeleteHistory(b.id)} className="saas-btn" style={{ padding: '4px 8px', background: '#fee2e2', color: '#dc2626', fontSize: '12px' }}>🗑️ Del</button>
-                          </>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+                        {!isEditing && (
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontWeight: 'bold', color: showHiddenBatches ? '#64748b' : '#b58a3d', fontSize: '16px' }}>{b.remaining_qty} Bags {showHiddenBatches ? 'Logged' : 'Left'}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>Cost: {formatRiel(b.cost_price)}</div>
+                          </div>
                         )}
+                        <div style={{ display: 'flex', gap: '8px', marginTop: isEditing ? '20px' : '8px' }}>
+                          {isEditing ? (
+                            <>
+                              <button onClick={() => handleSaveHistory(b.id)} className="saas-btn saas-btn-primary" style={{ padding: '6px 12px', fontSize: '12px' }}>Save</button>
+                              <button onClick={() => setEditingHistoryId(null)} className="saas-btn saas-btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>Cancel</button>
+                            </>
+                          ) : (
+                            <>
+                              {/* 🔥 HSR MANUAL OVERRIDE TOGGLES */}
+                              <button onClick={() => handleToggleBatchVisibility(b.id, !!(b as any).is_hidden)} className="saas-btn" style={{ padding: '4px 8px', background: (b as any).is_hidden ? '#e0f2fe' : '#fefcf3', color: (b as any).is_hidden ? '#0284c7' : '#b45309', fontSize: '12px', border: `1px solid ${(b as any).is_hidden ? '#bae6fd' : '#fde68a'}` }}>
+                                {(b as any).is_hidden ? '👁️ Unhide' : '🙈 Hide'}
+                              </button>
+                              <button onClick={() => { setEditingHistoryId(b.id); setHistoryEdits({ [b.id]: { remaining_qty: b.remaining_qty, cost_price: b.cost_price } }); }} className="saas-btn" style={{ padding: '4px 8px', background: '#f8fafc', color: '#475569', fontSize: '12px', border: '1px solid #e2e8f0' }}>✏️ Edit</button>
+                              <button onClick={() => handleDeleteHistory(b.id)} className="saas-btn" style={{ padding: '4px 8px', background: '#fee2e2', color: '#dc2626', fontSize: '12px', border: '1px solid #fecaca' }}>🗑️ Del</button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {/* SECTION 2: Permanent Import Log (These never decrease) */}
           <h3 className="saas-card-title" style={{ marginBottom: '12px', paddingTop: '16px', borderTop: '2px dashed #e2e8f0' }}>📦 Permanent Invoice Log</h3>

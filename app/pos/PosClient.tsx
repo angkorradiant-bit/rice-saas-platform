@@ -223,7 +223,8 @@ export default function POSPage() {
 
   // 🔥 TELEGRAM STOCK ALERT ENGINE
   const triggerStockAlert = async (productName: string = 'Unknown Product', currentStock: number = 0, minStockLevel: number = 0, weight: number = 50) => {
-    // Only alert if stock drops to or below the minimum threshold
+    // 🧠 HSR LOGIC: Spam filtering is now handled natively during the checkout loop.
+    // Only alert if stock drops to or below the minimum threshold, or goes negative
     if (currentStock > minStockLevel && currentStock > 0) return;
     
     const dateStr = new Date().toLocaleString('en-GB');
@@ -721,17 +722,53 @@ export default function POSPage() {
   }, [activeBranchId]);
 
   const loadBatches = useCallback(async () => {
-    const { data } = await supabase.from('inventory_batches').select('*').eq('branch_id', activeBranchId).order('created_at', { ascending: true });
+    const { data } = await supabase.from('inventory_batches')
+      .select('*')
+      .eq('branch_id', activeBranchId)
+      .eq('is_hidden', false) 
+      .order('created_at', { ascending: true });
+
     if (data) {
       const batchMap: Record<number, InventoryBatch[]> = {};
+      const batchesToHide: number[] = [];
+
+      const rawMap: Record<number, any[]> = {};
       data.forEach((b: any) => {
-        const remaining = b.remaining_qty || 0;
-        if (remaining > 0) {
-          if (!batchMap[b.product_id]) batchMap[b.product_id] = [];
-          batchMap[b.product_id].push(b);
-        }
+        if (!rawMap[b.product_id]) rawMap[b.product_id] = [];
+        rawMap[b.product_id].push(b);
       });
+
+      Object.keys(rawMap).forEach(prodIdStr => {
+        const prodId = Number(prodIdStr);
+        const batches = rawMap[prodId];
+
+        if (batches.length <= 1) {
+           batchMap[prodId] = batches; 
+           return;
+        }
+
+        let activeBatchIndex = 0;
+
+        while (activeBatchIndex < batches.length - 1) {
+           const currentBatch = batches[activeBatchIndex];
+           const nextBatch = batches[activeBatchIndex + 1];
+           
+           if ((currentBatch.remaining_qty || 0) <= 0 && (nextBatch.remaining_qty || 0) > 0) {
+              batchesToHide.push(currentBatch.id);
+              activeBatchIndex++;
+           } else {
+              break;
+           }
+        }
+
+        batchMap[prodId] = batches.slice(activeBatchIndex);
+      });
+
       setActiveBatches(batchMap);
+
+      if (batchesToHide.length > 0) {
+        supabase.from('inventory_batches').update({ is_hidden: true }).in('id', batchesToHide).then();
+      }
     }
   }, [activeBranchId]);
 
@@ -1021,8 +1058,7 @@ export default function POSPage() {
   const mixDropdownFilteredProducts = products.filter(p => {
     if (mixDropdownSearch && !p.name.toLowerCase().includes(mixDropdownSearch.toLowerCase())) return false;
     if (activeDropdown === 'bag') return p.name.includes('បាវ');
-    // 🔥 OVERSELL FIX: Removed "if (p.stock <= 0) return false;" so you can mix rice even if the system says 0!
-    if (activeDropdown === 'rice1' || activeDropdown === 'rice2' || activeDropdown === 'rice3') { if (p.weight < 50) return false; return true; }
+    if (activeDropdown === 'rice1' || activeDropdown === 'rice2' || activeDropdown === 'rice3') { if (p.stock <= 0) return false; if (p.weight < 50) return false; return true; }
     if (activeDropdown === 'target') { const isWholesale = Number(p.weight) >= 50; if (dropdownTab === 'wholesale' && !isWholesale) return false; if (dropdownTab === 'retail' && isWholesale) return false; return true; }
     return true;
   });
@@ -1433,7 +1469,7 @@ export default function POSPage() {
         .select('*')
         .eq('product_id', productId)
         .eq('branch_id', activeBranchId) 
-        .gt('remaining_qty', 0)
+        .eq('is_hidden', false)
         .order('created_at', { ascending: true });
       availableBatches = batches || [];
     }
@@ -1587,7 +1623,8 @@ export default function POSPage() {
             const { error } = await supabase.rpc('pull_wholesale_bags', {
                 p_retail_id: p.id,
                 p_wholesale_id: wholesaleProd.id,
-                p_bags_needed: p.bags_needed
+                p_bags_needed: p.bags_needed,
+                p_branch_id: activeBranchId // 🔒 FIX: Added missing branch ID so the RPC doesn't crash!
             });
             if (error) throw error;
 
@@ -1605,7 +1642,7 @@ export default function POSPage() {
         const { data: prodData } = await supabase.from('products').select('*').eq('is_archived', false).eq('branch_id', activeBranchId).order('id', { ascending: true });
         
         // ✅ FIX: Fetch fresh batches explicitly and pass them directly into Checkout bypassing React State
-        const { data: batchData } = await supabase.from('inventory_batches').select('*').eq('branch_id', activeBranchId).gt('remaining_qty', 0).order('created_at', { ascending: true });
+        const { data: batchData } = await supabase.from('inventory_batches').select('*').eq('branch_id', activeBranchId).eq('is_hidden', false).order('created_at', { ascending: true });
         
         let newBatchMap: Record<number, InventoryBatch[]> = {};
         if (batchData) {
@@ -1910,14 +1947,22 @@ export default function POSPage() {
           throw new Error(`Transaction Failed: ${atomicError.message}`);
       }
 
-      // 🔥 FIRE TELEGRAM ALERTS FOR DEDUCTED STOCK (Safe to do after DB succeeds)
+      // 🔥 FIRE TELEGRAM ALERTS FOR DEDUCTED STOCK
       for (const [prodIdStr, delta] of Object.entries(stockUpdates)) {
           const numericDelta = Number(delta);
-          if (numericDelta < 0) { // Only alert if stock was deducted
+          if (numericDelta < 0) {
               const prod = latestProducts.find(p => p.id === Number(prodIdStr));
               if (prod) {
-                  const updatedStock = Number(prod.stock || 0) + numericDelta; 
-                  triggerStockAlert(prod.name, updatedStock, Number(prod.min_stock_level) || 0);
+                  const previousStock = Number(prod.stock || 0);
+                  const updatedStock = previousStock + numericDelta;
+
+                  const crossedMinStock = previousStock > (prod.min_stock_level || 0) && updatedStock <= (prod.min_stock_level || 0) && updatedStock > 0;
+                  const hitZero = previousStock > 0 && updatedStock === 0;
+                  const wentNegativeFirstTime = previousStock >= 0 && updatedStock < 0;
+
+                  if (crossedMinStock || hitZero || wentNegativeFirstTime) {
+                      triggerStockAlert(prod.name, updatedStock, Number(prod.min_stock_level) || 0, Number(prod.weight) || 50);
+                  }
               }
           }
       }
@@ -2868,9 +2913,20 @@ export default function POSPage() {
                             {item.selected_batch_id 
                               ? (() => {
                                   const b = activeBatches[item.product_id]?.find(x => x.id === item.selected_batch_id);
-                                  return b ? `${formatRiel(b.cost_price)} (${b.remaining_qty})` : '▼ Auto FIFO';
+                                  const remaining = b?.remaining_qty || 0;
+                                  return b ? (
+                                    <span style={{ color: remaining <= 0 ? '#ea580c' : 'inherit', fontWeight: remaining <= 0 ? 'bold' : 'normal' }}>
+                                      {remaining <= 0 ? '⚠️ ' : ''}{formatRiel(b.cost_price)} ({remaining})
+                                    </span>
+                                  ) : '▼ Auto FIFO';
                                 })()
-                              : '▼ Auto FIFO'}
+                              : (() => {
+                                  const defaultB = activeBatches[item.product_id]?.[0];
+                                  const remaining = defaultB?.remaining_qty || 0;
+                                  return defaultB && remaining <= 0 ? (
+                                    <span style={{ color: '#ea580c', fontWeight: 'bold' }}>⚠️ Auto FIFO ({remaining})</span>
+                                  ) : '▼ Auto FIFO';
+                                })()}
                           </span>
                           <span style={{ fontSize: '10px', color: '#94a3b8', flexShrink: 0 }}>{openBatchMenuId === item.id ? '▲' : '▼'}</span>
                         </div>
@@ -3091,9 +3147,20 @@ export default function POSPage() {
                             {item.selected_batch_id 
                               ? (() => {
                                   const b = activeBatches[item.product_id]?.find(x => x.id === item.selected_batch_id);
-                                  return b ? `${formatRiel(b.cost_price)} (${b.remaining_qty})` : '▼ Auto FIFO';
+                                  const remaining = b?.remaining_qty || 0;
+                                  return b ? (
+                                    <span style={{ color: remaining <= 0 ? '#ea580c' : 'inherit', fontWeight: remaining <= 0 ? 'bold' : 'normal' }}>
+                                      {remaining <= 0 ? '⚠️ ' : ''}{formatRiel(b.cost_price)} ({remaining})
+                                    </span>
+                                  ) : '▼ Auto FIFO';
                                 })()
-                              : '▼ Auto FIFO'}
+                              : (() => {
+                                  const defaultB = activeBatches[item.product_id]?.[0];
+                                  const remaining = defaultB?.remaining_qty || 0;
+                                  return defaultB && remaining <= 0 ? (
+                                    <span style={{ color: '#ea580c', fontWeight: 'bold' }}>⚠️ Auto FIFO ({remaining})</span>
+                                  ) : '▼ Auto FIFO';
+                                })()}
                           </span>
                           <span style={{ fontSize: '10px', color: '#94a3b8', flexShrink: 0 }}>{openBatchMenuId === item.id ? '▲' : '▼'}</span>
                         </div>
@@ -3222,7 +3289,10 @@ export default function POSPage() {
           <ul style={{ paddingLeft: '0', marginTop: '12px', marginBottom: 0 }}>
             {autoOpenModal.items.map((p) => {
               const defaultW = p.linked_wholesale_id ? products.find(w => w.id === p.linked_wholesale_id) : null;
-              const isOutOfStock = !defaultW || defaultW.stock < p.bags_needed;
+              
+              // 🔥 OVERSELL FIX 5: We removed "|| defaultW.stock < p.bags_needed"
+              // Now the Auto-Open popup will look completely normal and won't flash red warnings when stock is 0!
+              const isOutOfStock = !defaultW; 
               
               const currentSelectedId = repackSubstitutes[p.id] || p.linked_wholesale_id;
               const currentSelectedName = products.find(prod => prod.id === currentSelectedId)?.name || '-- Click to Select a Bag --';
@@ -3230,7 +3300,7 @@ export default function POSPage() {
               
               const availableBags = products.filter(prod => 
                 Number(prod.weight) >= 50 && 
-                // 🔥 OVERSELL FIX: Removed "prod.stock >= p.bags_needed" so 0-stock bags show up in the search!
+                // 🔥 OVERSELL FIX: Allow bags with 0 or negative stock to be selected as substitutes!
                 (!searchTerm || prod.name.toLowerCase().includes(searchTerm.toLowerCase()))
               );
 
@@ -4686,7 +4756,7 @@ export default function POSPage() {
                 </div>
               </div>
               
-              {/* 🔥 UPGRADED: Link Wholesale Bag Search Portal (Exact clone of working Customer Search Modal) */}
+              {/* 🔥 UPGRADED: Link Wholesale Bag Search Portal (Only visible on Retail Tab) */}
               {activeTab === 'retail' && activeFullScreen === 'none' && (() => {
                 const linkedProd = newItem.linked_wholesale_id ? products.find(p => String(p.id) === String(newItem.linked_wholesale_id)) : null;
                 const availableBags = products.filter(p => Number(p.weight) > 1 && (!linkBagSearch || p.name.toLowerCase().includes(linkBagSearch.toLowerCase())));
