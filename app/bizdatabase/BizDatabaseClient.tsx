@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { formatRiel, formatUSD, formatNumber, EXCHANGE_RATE } from '@/utils/formatters'
@@ -11,7 +11,8 @@ import TableSkeleton from '@/components/TableSkeleton'
 import EmptyState from '@/components/EmptyState'
 import { useBranch } from '@/components/BranchContext' // 🔥 GLOBAL MEMORY IMPORTED
 import AdminGuard from '@/components/AdminGuard' // 🔒 NEW: IMPORT THE BOUNCER
-import { exportToExcel } from '@/utils/exportHelpers';
+import Modal from '@/components/Modal'
+import { exportBizDataToExcel } from '@/utils/exportHelpers';
 
 // Formats headers beautifully
 const formatHeader = (key: string) => {
@@ -66,6 +67,59 @@ const DEFAULT_DAILY_COLS = ['invoice_id', 'created_at', 'customer_name', 'owner'
 const DEFAULT_RETAIL_COLS = ['transaction_id', 'created_at', 'rice_type', 'qty', 'price_per_bag', 'cogs_price', 'total_sales', 'total_cogs', 'total_profit'];
 const DEFAULT_EXPENSE_COLS = ['created_at', 'description', 'amount_riel', 'amount_usd', 'category', 'status', 'owner'];
 
+// 🔥 PERFORMANCE FIX: React.memo prevents the entire table from redrawing when you click a single checkbox!
+const MemoizedTableRow = React.memo(({ t, activeColumns, isRowSelected, toggleSelect }: any) => {
+  const formatDate = (dateString: string) => {
+    const d = new Date(dateString)
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
+
+  return (
+    <tr className={`saas-tr ${isRowSelected ? 'selected' : ''}`}>
+      <td className="saas-td" style={{ textAlign: 'center', borderRight: '1px solid #f1f5f9', padding: '14px 12px' }}>
+        <input 
+          type="checkbox" 
+          className="biz-checkbox"
+          checked={isRowSelected} 
+          onChange={() => toggleSelect(t.id)} 
+        />
+      </td>
+
+      {activeColumns.map((col: string) => {
+        const val = t[col] ?? '';
+
+        return (
+          <td key={col} className="saas-td" style={{ padding: 0, borderRight: '1px solid #f1f5f9', position: 'relative' }}>
+            <div className="cell-display" style={{ cursor: 'default' }}>
+              {['invoice_id', 'transaction_id', 'customer_name', 'rice_types', 'rice_type', 'description'].includes(col) && (
+                <span style={{ fontWeight: ['invoice_id', 'transaction_id'].includes(col) ? 'bold' : 'normal', color: ['invoice_id', 'transaction_id'].includes(col) ? '#1e293b' : 'inherit' }}>
+                  {val || '-'}
+                </span>
+              )}
+              
+              {col === 'owner' && <span className="badge-owner">{val || '-'}</span>}
+              {col === 'category' && <span className="badge-category">{val || '-'}</span>}
+              {col === 'status' && <span className="badge-status">{val || '-'}</span>}
+              
+              {col === 'created_at' && formatDate(t.created_at)}
+              {col === 'qty' && formatNumber(val || 0)}
+
+              {['price_per_bag', 'cogs_price', 'total_sales', 'total_cogs', 'total_profit', 'amount_riel', 'amount_usd'].includes(col) && (
+                <span style={{ 
+                  fontWeight: 'bold', 
+                  color: (col === 'total_profit' && val < 0) || col === 'total_cogs' || col === 'cogs_price' || col === 'amount_riel' || col === 'amount_usd' ? '#ef4444' : '#10b981' 
+                }}>
+                  {col === 'amount_usd' ? formatUSD(val || 0) : formatRiel(val || 0)}
+                </span>
+              )}
+            </div>
+          </td>
+        )
+      })}
+    </tr>
+  )
+});
+
 export default function BizDatabase() {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch(); // 🔥 TUNED INTO RADIO TOWER
@@ -77,6 +131,8 @@ export default function BizDatabase() {
   const debouncedSearch = useDebounce(searchQuery, 300)
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('Today')
   const [isLoading, setIsLoading] = useState(true)
+  // --- EXPORT STATE ---
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   // --- SELECTION STATE ---
   const [selectedToDelete, setSelectedToDelete] = useState<Set<string>>(new Set())
@@ -479,32 +535,35 @@ export default function BizDatabase() {
   }
 
   // --- DATA PROCESSING (USING DEBOUNCED SEARCH!) ---
-  const processedTransactions = transactions
-    .filter(t => {
-      if (t.source !== activeTab) return false;
+  // 🔥 PERFORMANCE FIX: Caches the heavy sorting/filtering engine
+  const processedTransactions = useMemo(() => {
+    return transactions
+      .filter(t => {
+        if (t.source !== activeTab) return false;
 
-      if (debouncedSearch) {
-        const query = debouncedSearch.toLowerCase()
-        const searchableText = `${t.invoice_id || ''} ${t.transaction_id || ''} ${t.customer_name || ''} ${t.rice_types || ''} ${t.rice_type || ''} ${t.description || ''} ${t.category || ''}`.toLowerCase()
-        if (!searchableText.includes(query)) return false
-      }
+        if (debouncedSearch) {
+          const query = debouncedSearch.toLowerCase()
+          const searchableText = `${t.invoice_id || ''} ${t.transaction_id || ''} ${t.customer_name || ''} ${t.rice_types || ''} ${t.rice_type || ''} ${t.description || ''} ${t.category || ''}`.toLowerCase()
+          if (!searchableText.includes(query)) return false
+        }
 
-      return true
-    })
-    .sort((a, b) => {
-      if (!sortConfig) return 0;
-      const { key, direction } = sortConfig;
-      
-      let valA = a[key];
-      let valB = b[key];
-      
-      if (valA === undefined || valA === null) valA = '';
-      if (valB === undefined || valB === null) valB = '';
+        return true
+      })
+      .sort((a, b) => {
+        if (!sortConfig) return 0;
+        const { key, direction } = sortConfig;
+        
+        let valA = a[key];
+        let valB = b[key];
+        
+        if (valA === undefined || valA === null) valA = '';
+        if (valB === undefined || valB === null) valB = '';
 
-      if (valA < valB) return direction === 'asc' ? -1 : 1;
-      if (valA > valB) return direction === 'asc' ? 1 : -1;
-      return 0;
-    })
+        if (valA < valB) return direction === 'asc' ? -1 : 1;
+        if (valA > valB) return direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+  }, [transactions, activeTab, debouncedSearch, sortConfig]);
 
   // --- HELPERS ---
   const formatDate = (dateString: string) => {
@@ -538,13 +597,13 @@ export default function BizDatabase() {
         </div>
         <div className="header-actions" style={{ display: 'flex', gap: '12px' }}>
           <button 
-            onClick={() => exportToExcel(processedTransactions, `Sales-Export-Branch-${activeBranchId}-${timeFilter}.csv`)} 
+            onClick={() => setIsExportModalOpen(true)} 
             className="saas-btn"
             style={{ background: '#10b981', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px' }}
-            title="Export current view to Excel CSV"
+            title="Export Options"
           >
-            <span>📊</span>
-            <span className="hide-on-mobile">Export Excel</span>
+            <span>📤</span>
+            <span className="hide-on-mobile">Export Data</span>
           </button>
 
           {selectedToDelete.size > 0 && (
@@ -552,10 +611,6 @@ export default function BizDatabase() {
               🗑️ <span className="hide-on-mobile">Delete</span> ({selectedToDelete.size})
             </button>
           )}
-          <button className="saas-btn saas-btn-secondary" onClick={() => fetchData(false)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px' }} title="Refresh Data">
-            <span>{isLoading ? '⏳' : '🔄'}</span>
-            <span className="hide-on-mobile">{isLoading ? 'Loading...' : 'Refresh Data'}</span>
-          </button>
         </div>
       </div>
 
@@ -673,63 +728,57 @@ export default function BizDatabase() {
                   </td>
                 </tr>
               ) : (
-                processedTransactions.map(t => {
-                  const isRowSelected = selectedToDelete.has(t.id);
-                  
-                  return (
-                    <tr key={t.id} className={`saas-tr ${isRowSelected ? 'selected' : ''}`}>
-                      <td className="saas-td" style={{ textAlign: 'center', borderRight: '1px solid #f1f5f9', padding: '14px 12px' }}>
-                        <input 
-                          type="checkbox" 
-                          className="biz-checkbox"
-                          checked={isRowSelected} 
-                          onChange={() => toggleSelect(t.id)} 
-                        />
-                      </td>
-
-                      {activeColumns.map(col => {
-                        const val = t[col] ?? '';
-
-                        return (
-                          <td 
-                            key={col} 
-                            className="saas-td"
-                            style={{ padding: 0, borderRight: '1px solid #f1f5f9', position: 'relative' }}
-                          >
-                            <div className="cell-display" style={{ cursor: 'default' }}>
-                              {['invoice_id', 'transaction_id', 'customer_name', 'rice_types', 'rice_type', 'description'].includes(col) && (
-                                <span style={{ fontWeight: ['invoice_id', 'transaction_id'].includes(col) ? 'bold' : 'normal', color: ['invoice_id', 'transaction_id'].includes(col) ? '#1e293b' : 'inherit' }}>
-                                  {val || '-'}
-                                </span>
-                              )}
-                              
-                              {col === 'owner' && <span className="badge-owner">{val || '-'}</span>}
-                              {col === 'category' && <span className="badge-category">{val || '-'}</span>}
-                              {col === 'status' && <span className="badge-status">{val || '-'}</span>}
-                              
-                              {col === 'created_at' && formatDate(t.created_at)}
-                              {col === 'qty' && formatNumber(val || 0)}
-
-                              {['price_per_bag', 'cogs_price', 'total_sales', 'total_cogs', 'total_profit', 'amount_riel', 'amount_usd'].includes(col) && (
-                                <span style={{ 
-                                  fontWeight: 'bold', 
-                                  color: (col === 'total_profit' && val < 0) || col === 'total_cogs' || col === 'cogs_price' || col === 'amount_riel' || col === 'amount_usd' ? '#ef4444' : '#10b981' 
-                                }}>
-                                  {col === 'amount_usd' ? formatUSD(val || 0) : formatRiel(val || 0)}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  )
-                })
+                processedTransactions.map(t => (
+                  <MemoizedTableRow 
+                    key={t.id} 
+                    t={t} 
+                    activeColumns={activeColumns} 
+                    isRowSelected={selectedToDelete.has(t.id)} 
+                    toggleSelect={toggleSelect} 
+                  />
+                ))
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* 🟢 EXPORT POPUP MODAL */}
+      <Modal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} title="Export Database" icon="📤" maxWidth="400px">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+          
+          <button 
+            onClick={() => {
+              exportBizDataToExcel(transactions, `Full-Biz-Report-Branch-${activeBranchId}-${timeFilter}.xlsx`);
+              setIsExportModalOpen(false);
+            }} 
+            className="saas-btn" 
+            style={{ background: '#10b981', color: '#fff', padding: '16px', fontSize: '15px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', height: 'auto' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold' }}>
+              <span>📊</span> Download Excel (.xlsx)
+            </div>
+            <div style={{ fontSize: '11px', fontWeight: 'normal', opacity: 0.9 }}>Exports all 3 tabs (Wholesale, Retail, Expenses)</div>
+          </button>
+
+          <button 
+            onClick={() => {
+              setIsExportModalOpen(false);
+              // Wait a fraction of a second for the modal to close before triggering the PDF print dialog
+              setTimeout(() => window.print(), 300);
+            }} 
+            className="saas-btn saas-btn-primary" 
+            style={{ padding: '16px', fontSize: '15px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', height: 'auto' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold' }}>
+              <span>📄</span> Print / Save as PDF
+            </div>
+            <div style={{ fontSize: '11px', fontWeight: 'normal', opacity: 0.9 }}>Captures the currently visible table perfectly</div>
+          </button>
+
+        </div>
+        <button onClick={() => setIsExportModalOpen(false)} className="saas-btn saas-btn-secondary" style={{ width: '100%' }}>Cancel</button>
+      </Modal>
 
       {/* --- PRESERVED PAGE-SPECIFIC UTILITY STYLES --- */}
       <style jsx global>{`
@@ -751,18 +800,24 @@ export default function BizDatabase() {
         .badge-status { color: #64748b; font-style: italic; }
 
         .cell-display { padding: 14px 12px; width: 100%; height: 100%; box-sizing: border-box; display: flex; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .cell-input { width: 100%; height: 100%; padding: 14px 12px; font-size: 14px; border: none; outline: 2px solid #b58a3d; box-shadow: 0 0 5px rgba(181, 138, 61, 0.3); background: #fff; position: absolute; top: 0; left: 0; z-index: 20; box-sizing: border-box; color: #0f172a; }
-        .cell-editing { z-index: 20; position: relative; }
-        input[type="number"].no-spinners::-webkit-inner-spin-button, input[type="number"].no-spinners::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-        input[type="number"].no-spinners { -moz-appearance: textfield; }
-
+        
         .header-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; margin-top: 0; margin-left: 60px; gap: 12px; height: 42px; width: calc(100% - 60px); max-width: 1600px; }
         .header-left { display: flex; align-items: center; gap: 12px; }
 
-        @media (max-width: 1023px) {
-          /* 🔥 Drops the text on mobile so only the icons remain */
-          .hide-on-mobile { display: none !important; }
+        /* 🔥 PDF EXPORT CLEANUP: Hides sidebars and UI controls when generating the PDF */
+        @media print {
+          body { background: white; }
+          .header-actions, .saas-card, .time-filters-wrapper, .record-count-badge, .biz-checkbox, .resizer-handle { display: none !important; }
+          .main-wrapper { padding: 0 !important; margin: 0 !important; height: auto !important; overflow: visible !important; }
+          .saas-table-wrapper { flex: none !important; height: auto !important; overflow: visible !important; }
+          .saas-table-responsive { overflow: visible !important; }
+          .saas-table { width: 100% !important; border-collapse: collapse !important; }
+          .saas-th, .saas-td { border: 1px solid #e2e8f0 !important; font-size: 10pt !important; padding: 8px !important; }
+          .saas-th { background-color: #f8fafc !important; color: #000 !important; }
+        }
 
+        @media (max-width: 1023px) {
+          .hide-on-mobile { display: none !important; }
           .header-container { margin-left: 54px !important; margin-right: 0 !important; margin-bottom: 24px !important; margin-top: 0 !important; display: flex !important; flex-direction: row !important; justify-content: space-between !important; align-items: center !important; height: 44px !important; width: calc(100% - 54px) !important; }
           .header-left { display: flex !important; flex-direction: row !important; align-items: center !important; gap: 12px !important; }
           .toolbar-bottom-row { flex-direction: column; align-items: stretch; }

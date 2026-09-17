@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { useToast } from '@/components/ToastProvider'
@@ -26,6 +26,103 @@ interface Invoice {
 type FilterTab = 'All' | 'Today' | 'This Week' | 'This Month';
 type CategoryTab = 'All' | 'Wholesale' | 'WalkinWholesale' | 'WalkinRetail' | 'Voided';
 type VoidSubTab = 'All' | 'Wholesale' | 'WalkinWholesale' | 'WalkinRetail';
+
+// 🔥 PERFORMANCE FIX: Custom equality check completely blocks React from redrawing the grid when you type in the search bar!
+const rowPropsAreEqual = (prev: any, next: any) => {
+  return prev.inv.id === next.inv.id && 
+         prev.isSelected === next.isSelected && 
+         prev.isProcessing === next.isProcessing;
+};
+
+const MemoizedGridCard = React.memo(({ inv, isSelected, toggleSelect, handleVoidInvoice, isProcessing, isDeviceMobile, handleAction, formatDate, formatRiel }: any) => {
+  const isVoided = inv.delivery_status === 'Voided';
+  return (
+    <div className={`saas-card ${isSelected ? 'selected-grid-card' : ''} ${isVoided ? 'voided-grid-card' : ''}`} style={{ padding: 0, overflow: 'hidden', position: 'relative' }}>
+      <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(inv.invoice_id)} className="card-checkbox" />
+      <div onClick={() => toggleSelect(inv.invoice_id)} className="card-image-box">
+        {inv.invoice_url ? (
+          <img src={inv.invoice_url} alt="Invoice Document" className={`card-img ${isSelected ? 'img-selected' : ''}`} />
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8', fontSize: '14px', background: '#f8fafc' }}>
+            No Image (Retail Sale)
+          </div>
+        )}
+        {isVoided && (
+          <div className="void-overlay">
+            <span className="void-stamp">VOID</span>
+          </div>
+        )}
+      </div>
+      <div style={{ padding: '16px', borderBottom: '1px solid #e2e8f0' }}>
+        <div className={`saas-card-title ${isVoided ? 'voided-text' : ''}`} style={{ fontSize: '15px', color: '#0f172a', margin: 0 }}>{inv.invoice_id}</div>
+        <div style={{ fontSize: '14px', color: '#475569', marginTop: '6px', fontWeight: 'bold' }}>Customer: {inv.customer_name}</div>
+        <div style={{ fontSize: '13px', color: '#64748b', marginTop: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={inv.rice_types}>
+          🌾 {inv.rice_types}
+        </div>
+        <div style={{ fontSize: '16px', color: '#b58a3d', marginTop: '8px', fontWeight: 'bold' }}>💰 {formatRiel(inv.total_sales)}</div>
+      </div>
+      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', background: '#f8fafc', marginTop: 'auto' }}>
+        <div style={{ fontSize: '13px', color: '#64748b', textAlign: 'center', fontWeight: 'bold' }}>{formatDate(inv.created_at)}</div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {!isVoided && (
+            <button onClick={(e) => { e.stopPropagation(); handleVoidInvoice(inv.invoice_id); }} disabled={isProcessing} className="saas-btn" style={{ flex: 1, padding: '8px 4px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', fontWeight: 'bold' }}>
+              🚨 Void
+            </button>
+          )}
+          {!isVoided && (
+            <button onClick={(e) => { e.stopPropagation(); window.location.href = `/pos?edit=${inv.invoice_id}`; }} className="saas-btn" style={{ flex: 1, padding: '8px 4px', background: '#fef3c7', color: '#b45309', border: '1px solid #fde047' }}>
+              Edit
+            </button>
+          )}
+          {inv.invoice_url && (
+            <button onClick={(e) => { e.stopPropagation(); handleAction(inv.invoice_url, inv.invoice_id); }} className="saas-btn saas-btn-secondary" style={{ flex: 1, padding: '8px 4px' }}>
+              {isDeviceMobile ? 'Share' : 'Download'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}, rowPropsAreEqual);
+
+const MemoizedTableRow = React.memo(({ inv, isSelected, toggleSelect, handleVoidInvoice, isProcessing, isDeviceMobile, handleAction, formatDate, formatRiel }: any) => {
+  const isVoided = inv.delivery_status === 'Voided';
+  return (
+    <tr className={`saas-tr ${isSelected ? 'selected' : ''} ${isVoided ? 'row-voided' : ''}`}>
+      <td className="saas-td" style={{ textAlign: 'center' }}>
+        <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(inv.invoice_id)} style={{ cursor: 'pointer', width: '16px', height: '16px' }} />
+      </td>
+      <td className="saas-td" style={{ textAlign: 'center' }}>
+        {!isVoided ? (
+          <button onClick={(e) => { e.stopPropagation(); handleVoidInvoice(inv.invoice_id); }} disabled={isProcessing} className="saas-btn" style={{ padding: '6px 10px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', fontWeight: 'bold', fontSize: '11px', borderRadius: '6px', cursor: 'pointer' }}>
+            🚨 Void
+          </button>
+        ) : (
+          <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#991b1b' }}>VOIDED</span>
+        )}
+      </td>
+      <td className={`saas-td ${isVoided ? 'voided-text' : ''}`} style={{ fontWeight: 'bold' }}>{inv.invoice_id}</td>
+      <td className="saas-td" style={{ fontWeight: 'bold' }}>{inv.customer_name}</td>
+      <td className="saas-td" style={{ maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#475569' }} title={inv.rice_types}>
+        {inv.rice_types}
+      </td>
+      <td className="saas-td" style={{ textAlign: 'right', fontWeight: 'bold', color: '#b58a3d' }}>{formatRiel(inv.total_sales)}</td>
+      <td className="saas-td" style={{ color: '#475569' }}>{formatDate(inv.created_at)}</td>
+      <td className="saas-td" style={{ textAlign: 'center' }}>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+          {!isVoided && (
+            <button onClick={(e) => { e.stopPropagation(); window.location.href = `/pos?edit=${inv.invoice_id}`; }} className="saas-btn" style={{ padding: '6px 12px', background: '#fef3c7', color: '#b45309', border: 'none', fontSize: '12px' }}>Edit</button>
+          )}
+          {inv.invoice_url && (
+            <button onClick={(e) => { e.stopPropagation(); handleAction(inv.invoice_url, inv.invoice_id); }} className="saas-btn saas-btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>
+              {isDeviceMobile ? 'Share' : 'Download'}
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}, rowPropsAreEqual);
 
 export default function InvoiceGallery() {
   const { showToast } = useToast();
@@ -572,64 +669,20 @@ export default function InvoiceGallery() {
             
             /* --- GRID VIEW --- */
             <div className="grid-layout">
-              {processedInvoices.map((inv) => {
-                const isSelected = selectedInvoices.has(inv.invoice_id);
-                const isVoided = inv.delivery_status === 'Voided';
-
-                return (
-                  <div key={inv.id} className={`saas-card ${isSelected ? 'selected-grid-card' : ''} ${isVoided ? 'voided-grid-card' : ''}`} style={{ padding: 0, overflow: 'hidden', position: 'relative' }}>
-                    
-                    <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(inv.invoice_id)} className="card-checkbox" />
-
-                    <div onClick={() => toggleSelect(inv.invoice_id)} className="card-image-box">
-                      {inv.invoice_url ? (
-                        <img src={inv.invoice_url} alt="Invoice Document" className={`card-img ${isSelected ? 'img-selected' : ''}`} />
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8', fontSize: '14px', background: '#f8fafc' }}>
-                          No Image (Retail Sale)
-                        </div>
-                      )}
-                      {isVoided && (
-                        <div className="void-overlay">
-                          <span className="void-stamp">VOID</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div style={{ padding: '16px', borderBottom: '1px solid #e2e8f0' }}>
-                      <div className={`saas-card-title ${isVoided ? 'voided-text' : ''}`} style={{ fontSize: '15px', color: '#0f172a', margin: 0 }}>{inv.invoice_id}</div>
-                      <div style={{ fontSize: '14px', color: '#475569', marginTop: '6px', fontWeight: 'bold' }}>Customer: {inv.customer_name}</div>
-                      <div style={{ fontSize: '13px', color: '#64748b', marginTop: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={inv.rice_types}>
-                        🌾 {inv.rice_types}
-                      </div>
-                      <div style={{ fontSize: '16px', color: '#b58a3d', marginTop: '8px', fontWeight: 'bold' }}>💰 {formatRiel(inv.total_sales)}</div>
-                    </div>
-
-                    <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', background: '#f8fafc', marginTop: 'auto' }}>
-                      <div style={{ fontSize: '13px', color: '#64748b', textAlign: 'center', fontWeight: 'bold' }}>{formatDate(inv.created_at)}</div>
-                      
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        {!isVoided && (
-                          <button onClick={(e) => { e.stopPropagation(); handleVoidInvoice(inv.invoice_id); }} disabled={isProcessing} className="saas-btn" style={{ flex: 1, padding: '8px 4px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', fontWeight: 'bold' }}>
-                            🚨 Void
-                          </button>
-                        )}
-                       {/* 🔥 FIX: Removed !inv.is_retail to allow editing Retail Invoices */}
-                        {!isVoided && (
-                          <button onClick={(e) => { e.stopPropagation(); window.location.href = `/pos?edit=${inv.invoice_id}`; }} className="saas-btn" style={{ flex: 1, padding: '8px 4px', background: '#fef3c7', color: '#b45309', border: '1px solid #fde047' }}>
-                            Edit
-                          </button>
-                        )}
-                        {inv.invoice_url && (
-                          <button onClick={(e) => { e.stopPropagation(); handleAction(inv.invoice_url, inv.invoice_id); }} className="saas-btn saas-btn-secondary" style={{ flex: 1, padding: '8px 4px' }}>
-                            {isDeviceMobile ? 'Share' : 'Download'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {processedInvoices.map((inv) => (
+                <MemoizedGridCard
+                  key={inv.id}
+                  inv={inv}
+                  isSelected={selectedInvoices.has(inv.invoice_id)}
+                  toggleSelect={toggleSelect}
+                  handleVoidInvoice={handleVoidInvoice}
+                  isProcessing={isProcessing}
+                  isDeviceMobile={isDeviceMobile}
+                  handleAction={handleAction}
+                  formatDate={formatDate}
+                  formatRiel={formatRiel}
+                />
+              ))}
             </div>
 
           ) : (
@@ -653,47 +706,20 @@ export default function InvoiceGallery() {
                     </tr>
                   </thead>
                   <tbody>
-                    {processedInvoices.map((inv) => {
-                      const isSelected = selectedInvoices.has(inv.invoice_id);
-                      const isVoided = inv.delivery_status === 'Voided';
-
-                      return (
-                        <tr key={inv.id} className={`saas-tr ${isSelected ? 'selected' : ''} ${isVoided ? 'row-voided' : ''}`}>
-                          <td className="saas-td" style={{ textAlign: 'center' }}>
-                            <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(inv.invoice_id)} style={{ cursor: 'pointer', width: '16px', height: '16px' }} />
-                          </td>
-                          <td className="saas-td" style={{ textAlign: 'center' }}>
-                            {!isVoided ? (
-                              <button onClick={(e) => { e.stopPropagation(); handleVoidInvoice(inv.invoice_id); }} disabled={isProcessing} className="saas-btn" style={{ padding: '6px 10px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', fontWeight: 'bold', fontSize: '11px', borderRadius: '6px', cursor: 'pointer' }}>
-                                🚨 Void
-                              </button>
-                            ) : (
-                              <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#991b1b' }}>VOIDED</span>
-                            )}
-                          </td>
-                          <td className={`saas-td ${isVoided ? 'voided-text' : ''}`} style={{ fontWeight: 'bold' }}>{inv.invoice_id}</td>
-                          <td className="saas-td" style={{ fontWeight: 'bold' }}>{inv.customer_name}</td>
-                          <td className="saas-td" style={{ maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#475569' }} title={inv.rice_types}>
-                            {inv.rice_types}
-                          </td>
-                          <td className="saas-td" style={{ textAlign: 'right', fontWeight: 'bold', color: '#b58a3d' }}>{formatRiel(inv.total_sales)}</td>
-                          <td className="saas-td" style={{ color: '#475569' }}>{formatDate(inv.created_at)}</td>
-                          <td className="saas-td" style={{ textAlign: 'center' }}>
-                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                              {/* 🔥 FIX: Removed !inv.is_retail to allow editing Retail Invoices */}
-                              {!isVoided && (
-                                <button onClick={(e) => { e.stopPropagation(); window.location.href = `/pos?edit=${inv.invoice_id}`; }} className="saas-btn" style={{ padding: '6px 12px', background: '#fef3c7', color: '#b45309', border: 'none', fontSize: '12px' }}>Edit</button>
-                              )}
-                              {inv.invoice_url && (
-                                <button onClick={(e) => { e.stopPropagation(); handleAction(inv.invoice_url, inv.invoice_id); }} className="saas-btn saas-btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>
-                                  {isDeviceMobile ? 'Share' : 'Download'}
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
+                    {processedInvoices.map((inv) => (
+                      <MemoizedTableRow
+                        key={inv.id}
+                        inv={inv}
+                        isSelected={selectedInvoices.has(inv.invoice_id)}
+                        toggleSelect={toggleSelect}
+                        handleVoidInvoice={handleVoidInvoice}
+                        isProcessing={isProcessing}
+                        isDeviceMobile={isDeviceMobile}
+                        handleAction={handleAction}
+                        formatDate={formatDate}
+                        formatRiel={formatRiel}
+                      />
+                    ))}
                   </tbody>
                 </table>
               </div>

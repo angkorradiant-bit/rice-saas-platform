@@ -220,6 +220,19 @@ export default function POSPage() {
   const [activeCategory, setActiveCategory] = useState<string>('All')
   const [riceCategories, setRiceCategories] = useState<string[]>(RICE_CATEGORIES)
   const [isCategorySettingsOpen, setIsCategorySettingsOpen] = useState(false);
+  const [isVisibilitySettingsOpen, setIsVisibilitySettingsOpen] = useState(false);
+  const [visibilitySearch, setVisibilitySearch] = useState(''); // 🔥 NEW: Search state for the settings modal
+
+  const EyeIcon = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+  const EyeOffIcon = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m2 2 20 20" /><path d="M6.71 6.71A10.61 10.61 0 0 0 2 12s3 7 10 7a10.5 10.5 0 0 0 5.39-1.5M17.64 17.64A10.5 10.5 0 0 0 22 12s-3-7-10-7a10.5 10.5 0 0 0-2.43.28M12 15a3 3 0 0 1-2.95-2.5" />
+    </svg>
+  );
 
   // 🔥 TELEGRAM STOCK ALERT ENGINE
   const triggerStockAlert = async (productName: string = 'Unknown Product', currentStock: number = 0, minStockLevel: number = 0, weight: number = 50) => {
@@ -440,24 +453,27 @@ export default function POSPage() {
     }
   }, [cart, selectedCustomerId, cartCustomerNameOverride, activeTab, retailPriceSort, isPosMounted, editingInvoiceId, activeBranchId]);
 
-  const totalRiel = cart.reduce((sum, item) => {
-    const isNegativeItem = 
-      item.custom_name.includes('ដូរ') || 
-      item.custom_name.includes('បញ្ចុះតម្លៃ') || 
-      item.custom_name.includes('កក់');
-      
-    const price = Number(item.custom_price_riel) || 0;
-    const qty = Number(item.quantity) || 0;
-    const itemTotal = price * qty;
-    return isNegativeItem ? sum - Math.abs(itemTotal) : sum + itemTotal;
-  }, 0);
+  // 🔥 PERFORMANCE FIX: Cache the heavy reduce loop so it only runs when the cart actually changes
+  const totalRiel = React.useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const isNegativeItem = 
+        item.custom_name.includes('ដូរ') || 
+        item.custom_name.includes('បញ្ចុះតម្លៃ') || 
+        item.custom_name.includes('កក់');
+        
+      const price = Number(item.custom_price_riel) || 0;
+      const qty = Number(item.quantity) || 0;
+      const itemTotal = price * qty;
+      return isNegativeItem ? sum - Math.abs(itemTotal) : sum + itemTotal;
+    }, 0);
+  }, [cart]);
 
-  const totalUSD = totalRiel / EXCHANGE_RATE; 
+  const totalUSD = React.useMemo(() => totalRiel / EXCHANGE_RATE, [totalRiel]); 
 
-  const isCartValid = cart.length > 0 && cart.every(item => 
+  const isCartValid = React.useMemo(() => cart.length > 0 && cart.every(item => 
     item.quantity !== '' && Number(item.quantity) > 0 && 
     item.custom_price_riel !== '' && Number(item.custom_price_riel) >= 0
-  );
+  ), [cart]);
 
   useEffect(() => {
     const loadImages = async () => {
@@ -1110,22 +1126,23 @@ export default function POSPage() {
     )
   }
 
-  const toggleProductActiveStatus = async (productId: number, targetStatus: 'active' | 'inactive') => {
-    let newHidden: number[];
-    if (targetStatus === 'inactive') {
-      newHidden = Array.from(new Set([...hiddenRetailIds, productId]));
-    } else {
-      newHidden = hiddenRetailIds.filter(id => id !== productId);
-    }
+  const toggleProductVisibility = async (productId: number) => {
+    const isHidden = hiddenRetailIds.includes(productId);
+    const newHidden = isHidden ? hiddenRetailIds.filter(id => id !== productId) : [...hiddenRetailIds, productId];
     setHiddenRetailIds(newHidden);
     
-    // 🔒 LEAK FIX: Ensure we only hide this item for the current branch!
+    // Save to isolated branch database
     const branchKey = activeBranchId === 0 ? 'hidden_retail_ids' : `hidden_retail_ids_${activeBranchId}`;
-    await supabase.from('app_settings').upsert(
-      { setting_key: branchKey, setting_value: newHidden },
-      { onConflict: 'setting_key' }
-    );
+    await supabase.from('app_settings').upsert({ setting_key: branchKey, setting_value: newHidden }, { onConflict: 'setting_key' });
   }
+
+  const getKeywordIndex = (name: string) => {
+    const lower = (name || '').toLowerCase();
+    for (let i = 0; i < MAIN_KEYWORDS.length; i++) {
+      if (lower.includes(MAIN_KEYWORDS[i].toLowerCase())) return i;
+    }
+    return 999;
+  };
 
   function handleProductClick(product: Product) {
     const isMobile = typeof window !== 'undefined' && window.innerWidth < 1024;
@@ -1754,7 +1771,8 @@ export default function POSPage() {
         return `${s.method}: ${s.face_amount}`;
       }).join(', ');
 
-      const combinedRiceTypes = currentCart.map(item => `${item.custom_name} (x${item.quantity})`).join(', ');
+      // 🔥 FIX: Wraps quantity in Math.abs() so discounts and returns always look pretty like (x1) instead of (x-1)
+      const combinedRiceTypes = currentCart.map(item => `${item.custom_name} (x${Math.abs(Number(item.quantity))})`).join(', ');
       const baseSaleRows: any[] = [];
       const stockUpdates: Record<number, number> = {}; 
       const fifoUpdates: Record<number, number> = {}; 
@@ -2087,86 +2105,95 @@ export default function POSPage() {
   const handleNativePrint = () => { window.print(); }
 
   const currentT = t[lang] || t['en'];
-  // 🔥 Keeps Bags paired with their Rice, while keeping Returns at top and Discounts at bottom
-  const sortedCart = [...cart].sort((a, b) => {
-    const getPriority = (item: CartItem) => {
-      const name = item.custom_name || item.name || '';
-      if (name.includes('ដូរ')) return -2;
-      if (name.includes('បានប្រើ')) return -1;
-      if (name.includes('បញ្ចុះតម្លៃ') || name.includes('កក់')) return 999;
-      return 0; // Regular rice and bags stay in their exact paired sequence
-    };
-    const pA = getPriority(a);
-    const pB = getPriority(b);
-    if (pA !== pB) return pA - pB;
-    return (a.sortOrder || 0) - (b.sortOrder || 0);
-  });
+  
+  // 🔥 PERFORMANCE FIX: Cache the Cart Sort so typing quantities is perfectly smooth
+  const sortedCart = React.useMemo(() => {
+    return [...cart].sort((a, b) => {
+      const getPriority = (item: CartItem) => {
+        const name = item.custom_name || item.name || '';
+        if (name.includes('ដូរ')) return -2;
+        if (name.includes('បានប្រើ')) return -1;
+        if (name.includes('បញ្ចុះតម្លៃ') || name.includes('កក់')) return 999;
+        return 0; // Regular rice and bags stay in their exact paired sequence
+      };
+      const pA = getPriority(a);
+      const pB = getPriority(b);
+      if (pA !== pB) return pA - pB;
+      return (a.sortOrder || 0) - (b.sortOrder || 0);
+    });
+  }, [cart]);
 
-  const orderedProducts = [...products].sort((a, b) => {
-    const idxA = productOrder.indexOf(a.id);
-    const idxB = productOrder.indexOf(b.id);
-    if (idxA === -1 && idxB === -1) return a.id - b.id;
-    if (idxA === -1) return 1;
-    if (idxB === -1) return -1;
-    return idxA - idxB;
-  });
+  // 🔥 PERFORMANCE FIX: The Massive Grid Cache. This prevents the entire product board from reloading when you click the cart!
+  const filteredProducts = React.useMemo(() => {
+    // 1. Initial Order
+    const ordered = [...products].sort((a, b) => {
+      const idxA = productOrder.indexOf(a.id);
+      const idxB = productOrder.indexOf(b.id);
+      if (idxA === -1 && idxB === -1) return a.id - b.id;
+      if (idxA === -1) return 1;
+      if (idxB === -1) return -1;
+      return idxA - idxB;
+    });
 
-  const filteredProducts = orderedProducts.filter(p => {
-    if (searchQuery && !p.name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    const weightVal = parseFloat(String(p.weight) || '0');
-    // 🔥 ARCHITECTURE FIX: 1kg is strictly Retail (Loose). Anything heavier is Wholesale (Sealed Bag).
-    if (activeTab === 'wholesale' && weightVal <= 1) return false; 
-    if (activeTab === 'retail' && weightVal > 1) return false;
-
-    if (activeTab === 'retail') {
-      const isHidden = hiddenRetailIds.includes(p.id);
-      if (retailSubTab === 'active' && isHidden) return false;
-      if (retailSubTab === 'inactive' && !isHidden) return false;
-    }
-    
-    if (activeTab === 'wholesale') {
-      if (activeCategory === '❌ Out of Stock') return Number(p.stock) <= 0;
-      // 🔥 OVERSELL FIX: We removed "if (p.stock <= 0) return false;" here. 
-      // Now products with 0 or negative stock will stay permanently visible on the grid!
-    }
-
-    if (activeTab !== 'retail' && activeCategory !== 'All' && activeCategory !== '❌ Out of Stock') {
-      if (activeCategory === '🔥 Hot') {
-        const top10Ids = Object.entries(mtdSalesStats).sort(([,a], [,b]) => b - a).slice(0, 10).map(([id]) => Number(id));
-        return top10Ids.includes(p.id);
-      }
+    // 2. Filter
+    const filtered = ordered.filter(p => {
+      if (searchQuery && !p.name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      const weightVal = parseFloat(String(p.weight) || '0');
       
-      const name = p.name || '';
-      if (activeCategory === 'ផ្សេងៗ') {
-        if (MAIN_KEYWORDS.some(kw => name.includes(kw))) return false;
-      } else {
-        if (!name.includes(activeCategory)) return false;
+      if (activeTab === 'wholesale' && weightVal <= 1) return false; 
+      if (activeTab === 'retail' && weightVal > 1) return false;
+
+      const isHidden = hiddenRetailIds.includes(p.id);
+
+      if (activeTab === 'retail') {
+        if (retailSubTab === 'active' && isHidden) return false;
+        if (retailSubTab === 'inactive' && !isHidden) return false;
+      }
+
+      if (activeTab === 'wholesale') {
+        if (isHidden) return false; 
+        if (activeCategory === '❌ Out of Stock') return Number(p.stock) <= 0;
+      }
+
+      if (activeTab !== 'retail' && activeCategory !== 'All' && activeCategory !== '❌ Out of Stock') {
+        if (activeCategory === '🔥 Hot') {
+          const top10Ids = Object.entries(mtdSalesStats).sort(([,a], [,b]) => b - a).slice(0, 10).map(([id]) => Number(id));
+          return top10Ids.includes(p.id);
+        }
+        
+        const name = p.name || '';
+        if (activeCategory === 'ផ្សេងៗ') {
+          if (MAIN_KEYWORDS.some(kw => name.includes(kw))) return false;
+        } else {
+          if (!name.includes(activeCategory)) return false;
+        }
+      }
+      return true;
+    });
+
+    // 3. Final Sort
+    if (activeTab === 'wholesale') {
+      filtered.sort((a, b) => {
+        const cogsA = Number(activeBatches[a.id]?.[0]?.cost_price || a.cost_price || 0);
+        const cogsB = Number(activeBatches[b.id]?.[0]?.cost_price || b.cost_price || 0);
+        return cogsB - cogsA;
+      });
+
+      if (activeCategory === '🔥 Hot') {
+        filtered.sort((a, b) => (mtdSalesStats[b.id] || 0) - (mtdSalesStats[a.id] || 0));
       }
     }
-    return true;
-  });
 
-  // 🔥 SORT BY COGS: Highest cost rice at top, lowest at bottom (FOR WHOLESALE)
-  if (activeTab === 'wholesale') {
-    filteredProducts.sort((a, b) => {
-      const cogsA = Number(activeBatches[a.id]?.[0]?.cost_price || a.cost_price || 0);
-      const cogsB = Number(activeBatches[b.id]?.[0]?.cost_price || b.cost_price || 0);
-      return cogsB - cogsA;
-    });
-
-    if (activeCategory === '🔥 Hot') {
-      filteredProducts.sort((a, b) => (mtdSalesStats[b.id] || 0) - (mtdSalesStats[a.id] || 0));
+    if (activeTab === 'retail' && retailPriceSort !== 'none') {
+      filtered.sort((a, b) => {
+        const priceA = Number(a.price || 0);
+        const priceB = Number(b.price || 0);
+        return retailPriceSort === 'asc' ? priceA - priceB : priceB - priceA;
+      });
     }
-  }
 
-  // 🔥 NEW: SORT RETAIL PRICE BASED ON STATE
-  if (activeTab === 'retail' && retailPriceSort !== 'none') {
-    filteredProducts.sort((a, b) => {
-      const priceA = Number(a.price || 0);
-      const priceB = Number(b.price || 0);
-      return retailPriceSort === 'asc' ? priceA - priceB : priceB - priceA;
-    });
-  }
+    return filtered;
+  }, [products, productOrder, searchQuery, activeTab, activeCategory, hiddenRetailIds, retailSubTab, mtdSalesStats, retailPriceSort, activeBatches]);
 
   const filteredCustomers = customers.filter(c => 
     (c.name || '').toLowerCase().includes(customerSearchTerm.toLowerCase()) || (c.phone || '').includes(customerSearchTerm)
@@ -2177,11 +2204,14 @@ export default function POSPage() {
   const isSimpleCustomer = !selectedCustomer || ['walk-in', 'walk in', 'mom'].includes((selectedCustomer?.name || '').toLowerCase());
   const showPaymentSelector = activeTab === 'retail' || isSimpleCustomer;
 
-  const liveTotalReceivedInRiel = paymentRows.reduce((sum, row) => {
-    const amt = Number(row.amount) || 0;
-    if (row.method.includes('$')) return sum + (amt * EXCHANGE_RATE);
-    return sum + amt;
-  }, 0);
+  // 🔥 PERFORMANCE FIX: Prevent payment math from recalculating 100 times when you type an amount
+  const liveTotalReceivedInRiel = React.useMemo(() => {
+    return paymentRows.reduce((sum, row) => {
+      const amt = Number(row.amount) || 0;
+      if (row.method.includes('$')) return sum + (amt * EXCHANGE_RATE);
+      return sum + amt;
+    }, 0);
+  }, [paymentRows]);
 
   const hasValidPayment = !showPaymentSelector || liveTotalReceivedInRiel >= totalRiel;
 
@@ -2333,7 +2363,8 @@ export default function POSPage() {
               )}
             </div>
 
-            <div style={{ marginBottom: '16px' }}>
+            {/* 🔥 FIX: Removed the bottom margin for Retail so it snaps perfectly to the grid below */}
+            <div style={{ marginBottom: activeTab === 'retail' ? '0' : '16px' }}>
               <div className="saas-tab-container hide-scrollbar" style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', marginBottom: activeTab === 'retail' ? '12px' : '0px', width: '100%' }}>
                 <button onClick={() => { 
                   setActiveTab('retail'); 
@@ -2361,16 +2392,10 @@ export default function POSPage() {
               {activeTab === 'retail' && (
                 <div className="hide-scrollbar" style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px', alignItems: 'center', overflowX: 'auto', width: '100%', paddingBottom: '4px' }}>
                   
-                  {/* 🔥 STRETCHED ACTIVE/INACTIVE CONTAINER (42px Height) */}
+                  {/* 🔥 RESTORED ACTIVE/INACTIVE CONTAINER (Cleaned of Drag-and-Drop) */}
                   <div className="hide-scrollbar" style={{ flex: 1, display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', background: '#f8fafc', border: '1px solid #e2e8f0', height: '48px', padding: '4px', boxSizing: 'border-box', borderRadius: '8px', alignItems: 'center' }}>
                     <button 
                       onClick={() => setRetailSubTab('active')} 
-                      onDragOver={(e) => e.preventDefault()} 
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const pid = Number(e.dataTransfer.getData('product_id'));
-                        if (pid) toggleProductActiveStatus(pid, 'active');
-                      }}
                       style={{ flex: 1, height: '100%', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px', borderRadius: '6px', fontSize: '13px', whiteSpace: 'nowrap', border: 'none', background: retailSubTab === 'active' ? '#b58a3d' : 'transparent', color: retailSubTab === 'active' ? '#fff' : '#64748b', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s' }}
                     >
                       Active ({products.filter(p => parseFloat(String(p.weight)) < 50 && !hiddenRetailIds.includes(p.id)).length})
@@ -2378,12 +2403,6 @@ export default function POSPage() {
                     
                     <button 
                       onClick={() => setRetailSubTab('inactive')} 
-                      onDragOver={(e) => e.preventDefault()} 
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const pid = Number(e.dataTransfer.getData('product_id'));
-                        if (pid) toggleProductActiveStatus(pid, 'inactive');
-                      }}
                       style={{ 
                         flex: 1, 
                         height: '100%', 
@@ -2474,7 +2493,8 @@ export default function POSPage() {
               )}
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', minWidth: 0 }}>
+            {/* 🔥 FIX: Completely collapse this wrapper on Retail to prevent invisible flex gaps */}
+            <div style={{ display: activeTab === 'retail' ? 'none' : 'flex', flexDirection: 'column', gap: '16px', width: '100%', minWidth: 0 }}>
               
               <div style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px', alignItems: 'flex-start', width: '100%' }}>
                 {/* ❌ REMOVED PRODUCT SEARCH INPUT HERE */}
@@ -2795,10 +2815,20 @@ export default function POSPage() {
                         >
                           🔄
                         </button>
-                      )}
+                     )}
                     </div>
                   </div>
                 ))}
+
+                {/* ⚙️ MOBILE CARD AT THE END OF THE LIST */}
+                <div
+                  onClick={() => setIsVisibilitySettingsOpen(true)}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '2px dashed #cbd5e1', cursor: 'pointer', marginTop: '4px' }}
+                >
+                  <span style={{ fontSize: '16px', marginRight: '8px' }}>⚙️</span>
+                  <span style={{ fontSize: '14px', color: '#64748b', fontWeight: 'bold' }}>Hide / Show Rice</span>
+                </div>
+
               </div>
             ) : (
               /* 💻 LAPTOP: ORIGINAL UNTOUCHED CARD GRID */
@@ -2849,10 +2879,23 @@ export default function POSPage() {
                         >
                           🔄
                         </button>
-                      )}
+                     )}
                     </div>
                   </div>
                 ))}
+
+                {/* ⚙️ DESKTOP CARD AT THE END OF THE GRID */}
+                <div 
+                  onClick={() => setIsVisibilitySettingsOpen(true)}
+                  className="saas-card"
+                  style={{ padding: '14px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100px', border: '2px dashed #cbd5e1', background: '#f8fafc', transition: 'transform 0.1s', boxShadow: 'none' }}
+                  onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.97)'; }} 
+                  onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+                >
+                  <span style={{ fontSize: '24px', marginBottom: '8px' }}>⚙️</span>
+                  <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 'bold' }}>Hide / Show Rice</span>
+                </div>
+
               </div>
             )}
           </div>
@@ -4722,6 +4765,86 @@ export default function POSPage() {
         </div>,
         document.body
       )}
+
+      {/* ⚙️ POS VISIBILITY SETTINGS MODAL */}
+      <Modal isOpen={isVisibilitySettingsOpen} onClose={() => { setIsVisibilitySettingsOpen(false); setVisibilitySearch(''); }} title={`⚙️ Manage ${activeTab === 'retail' ? 'Retail' : 'Wholesale'} Visibility`} maxWidth="400px">
+        <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '12px', marginTop: 0 }}>Click the eye to hide/unhide products. Hidden items will drop to the bottom.</p>
+        
+        {/* 🔥 NEW: Search Bar inside the Settings Modal */}
+        <div style={{ position: 'relative', marginBottom: '16px' }}>
+          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: '14px' }}>🔍</span>
+          <input
+            type="text"
+            placeholder="Search products..."
+            value={visibilitySearch}
+            onChange={(e) => setVisibilitySearch(e.target.value)}
+            className="saas-input"
+            style={{ width: '100%', paddingLeft: '34px', fontSize: '14px', boxSizing: 'border-box' }}
+          />
+        </div>
+
+        <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '55vh', overflowY: 'auto', paddingRight: '4px', paddingBottom: '10px' }}>
+          {products
+            .filter(p => {
+              // Ensure we only show the current tab's products
+              const weightVal = parseFloat(String(p.weight) || '0');
+              if (activeTab === 'wholesale' && weightVal <= 1) return false; 
+              if (activeTab === 'retail' && weightVal > 1) return false;
+              
+              // 🔥 NEW: Search filter
+              if (visibilitySearch && !p.name.toLowerCase().includes(visibilitySearch.toLowerCase())) return false;
+              
+              return true;
+            })
+            .sort((a, b) => {
+              // 🔥 NEW: 1. Hidden items always drop to the absolute bottom!
+              const isHiddenA = hiddenRetailIds.includes(a.id);
+              const isHiddenB = hiddenRetailIds.includes(b.id);
+              if (isHiddenA && !isHiddenB) return 1;
+              if (!isHiddenA && isHiddenB) return -1;
+
+              // 2. Sort by Rice Type Category (Keyword Algorithm)
+              const idxA = getKeywordIndex(a.name);
+              const idxB = getKeywordIndex(b.name);
+              if (idxA !== idxB) return idxA - idxB;
+
+              // 3. Sort by Price (HIGH TO LOW)
+              const priceA = activeTab === 'retail' ? Number(a.price || 0) : Number(a.cost_price || 0);
+              const priceB = activeTab === 'retail' ? Number(b.price || 0) : Number(b.cost_price || 0);
+              return priceB - priceA; 
+            })
+            .map(p => {
+              const isHidden = hiddenRetailIds.includes(p.id);
+              return (
+                <div 
+                  key={p.id} 
+                  onClick={() => toggleProductVisibility(p.id)}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', background: isHidden ? '#fef2f2' : '#ffffff', border: `1px solid ${isHidden ? '#fecaca' : '#e2e8f0'}`, borderRadius: '8px', cursor: 'pointer', transition: 'all 0.1s' }}
+                >
+                  {/* Eye Icon IN FRONT of Rice Name */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                    <span style={{ color: isHidden ? '#ef4444' : '#64748b', display: 'flex', flexShrink: 0 }}>
+                      {isHidden ? <EyeOffIcon /> : <EyeIcon />}
+                    </span>
+                    <span style={{ fontWeight: isHidden ? 'normal' : 'bold', color: isHidden ? '#94a3b8' : '#1e293b', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {p.name}
+                    </span>
+                  </div>
+                  
+                  {/* Price */}
+                  <span style={{ fontSize: '13px', color: isHidden ? '#fca5a5' : '#b58a3d', fontWeight: 'bold', flexShrink: 0, paddingLeft: '8px' }}>
+                    {formatRiel(activeTab === 'retail' ? p.price : p.cost_price)} ៛
+                  </span>
+                </div>
+              );
+            })
+          }
+        </div>
+
+        <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end' }}>
+          <button onClick={() => setIsVisibilitySettingsOpen(false)} className="saas-btn saas-btn-primary">Done</button>
+        </div>
+      </Modal>
 
       {/* ⚙️ CATEGORY REORDER MODAL */}
       <Modal isOpen={isCategorySettingsOpen} onClose={() => setIsCategorySettingsOpen(false)} title="Manage Categories" icon="⚙️" maxWidth="400px">
