@@ -1841,7 +1841,12 @@ export default function POSPage() {
       let deletedSaleIds: string[] = [];
 
       if (editingInvoiceId) {
-        const { data: existingSales } = await supabase.from('sales').select('*').eq('invoice_id', editingInvoiceId);
+        // 🔥 FIX: Dynamically detect the table so Retail edits properly revert stock!
+        const targetTable = activeTab === 'retail' ? 'retail_sales' : 'sales';
+        const targetColumn = activeTab === 'retail' ? 'transaction_id' : 'invoice_id';
+
+        const { data: existingSales } = await supabase.from(targetTable).select('*').eq(targetColumn, editingInvoiceId);
+        
         if (existingSales) {
           for (const old of existingSales) {
               if (old.product_id && old.qty) {
