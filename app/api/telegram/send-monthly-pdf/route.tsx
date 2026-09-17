@@ -736,6 +736,12 @@ export async function POST(request: Request) {
     // Attach the exact same pdfBlob here
     formData.append('document', pdfBlob, cleanFilename)
 
+    // 🚦 ROUTE PDF TO FINANCIAL REPORT TOPIC
+    const targetThreadId = (TELEGRAM_CONFIG as any).reportTopics?.[branch_id || 0];
+    if (targetThreadId) {
+      formData.append('message_thread_id', String(targetThreadId));
+    }
+
     const telegramRes = await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, { method: 'POST', body: formData })
     const telegramResult = await telegramRes.json()
     if (!telegramRes.ok) throw new Error(telegramResult.description || 'Telegram failed')

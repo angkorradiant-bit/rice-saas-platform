@@ -248,13 +248,26 @@ export default function POSPage() {
     const message = `📅 Date: ${dateStr}\n🏬 Branch: *${activeBranchId} - ${branchName}*\n🌾 ${productType} Product: *${productName}*\n📦 Current Stock: *${currentStock}*`;
 
     const botToken = TELEGRAM_CONFIG.botToken || process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN;
-    const chatId = (TELEGRAM_CONFIG as any).newGroupChatId || (TELEGRAM_CONFIG as any).stockChatId || TELEGRAM_CONFIG.chatId;
+    const masterChatId = TELEGRAM_CONFIG.chatId || process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID;
+    
+    // 🚦 ROUTE TO STOCK TOPICS (11 or 12)
+    const targetThreadId = (TELEGRAM_CONFIG as any).stockTopics?.[activeBranchId];
 
-    if (botToken && chatId) {
+    if (botToken && masterChatId) {
+      const payload: any = {
+        chat_id: masterChatId,
+        text: message,
+        parse_mode: 'Markdown'
+      };
+
+      if (targetThreadId) {
+        payload.message_thread_id = targetThreadId;
+      }
+
       fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'Markdown' })
+        body: JSON.stringify(payload)
       }).catch(console.error);
     }
   };
@@ -641,8 +654,8 @@ export default function POSPage() {
     }
   }, [selectedCustomerId, customers])
 
+  // 🔥 PERFORMANCE FIX: Wrap in setTimeout so the tab switch renders instantly FIRST, then assigns the customer in the background.
   useEffect(() => {
-    // 🔥 Prevent auto-assigning Walk-in if we are currently loading an Edit session
     if (activeTab === 'wholesale' && !selectedCustomerId && customers.length > 0 && !editingInvoiceId) {
       const walkInCust = customers.find(c => c.name.toLowerCase() === 'walk-in' || c.name.toLowerCase() === 'walk in');
       if (walkInCust) setSelectedCustomerId(walkInCust.id.toString());
@@ -2370,8 +2383,7 @@ export default function POSPage() {
                   setActiveTab('retail'); 
                   setSelectedCustomerId(''); 
                   setCustomerSearchTerm(''); 
-                  loadProductsAndSettings();
-                  loadBatches();
+                  // 🔥 PERFORMANCE FIX: Deleted the database load functions! Websockets handle data now.
                 }} className={`saas-tab ${activeTab === 'retail' ? 'active' : ''}`} style={{ flex: 1, minWidth: '120px', textAlign: 'center' }}>
                   {currentT.retail}
                 </button>
@@ -2382,8 +2394,7 @@ export default function POSPage() {
                     const walkInCust = customers.find(c => c.name.toLowerCase() === 'walk-in' || c.name.toLowerCase() === 'walk in');
                     if (walkInCust) setSelectedCustomerId(walkInCust.id.toString());
                   }
-                  loadProductsAndSettings();
-                  loadBatches();
+                  // 🔥 PERFORMANCE FIX: Deleted the database load functions! Websockets handle data now.
                 }} className={`saas-tab ${activeTab === 'wholesale' ? 'active' : ''}`} style={{ flex: 1, minWidth: '120px', textAlign: 'center' }}>
                   {currentT.wholesale}
                 </button>

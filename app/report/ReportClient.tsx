@@ -509,25 +509,34 @@ export default function ReportControlPage() {
 
   // --- 7. DISPATCH TO TELEGRAM (DAILY TEXT) ---
   async function handleSendTelegram() {
-    const activeBotToken = TELEGRAM_CONFIG.botToken
-    const activeChatId = TELEGRAM_CONFIG.chatId
+    const activeBotToken = TELEGRAM_CONFIG.botToken;
+    const masterChatId = TELEGRAM_CONFIG.chatId;
 
-    if (!activeBotToken || !activeChatId) {
+    if (!activeBotToken || !masterChatId) {
       showToast('error', 'Missing Info', 'Please add your credentials to lib/telegramConfig.ts first.')
       return
     }
+
+    // 🚦 ROUTE TO FINANCIAL REPORT TOPICS (2 or 3)
+    const targetThreadId = (TELEGRAM_CONFIG as any).reportTopics?.[activeBranchId];
 
     setIsSending(true)
     const textToSend = generateTelegramMessage()
 
     try {
+      const payload: any = {
+        chat_id: masterChatId,
+        text: textToSend
+      };
+
+      if (targetThreadId) {
+        payload.message_thread_id = targetThreadId;
+      }
+
       const response = await fetch(`https://api.telegram.org/bot${activeBotToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: activeChatId,
-          text: textToSend
-        })
+        body: JSON.stringify(payload)
       })
 
       const result = await response.json()
