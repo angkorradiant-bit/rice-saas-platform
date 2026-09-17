@@ -388,6 +388,12 @@ export async function generateAndSendCogsReport({
   );
   tgFormData.append('parse_mode', 'HTML');
 
+  // 🚦 ROUTE PDF TO FINANCIAL REPORT TOPIC
+  const targetThreadId = (TELEGRAM_CONFIG as any).reportTopics?.[branch_id || 0];
+  if (targetThreadId) {
+    tgFormData.append('message_thread_id', String(targetThreadId));
+  }
+
   const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, {
     method: 'POST',
     body: tgFormData
