@@ -1743,9 +1743,11 @@ export default function POSPage() {
 
       // 🔥 Generate a collision-proof ID
       const uniqueSuffix = Date.now().toString(36).toUpperCase() + '-' + Math.floor(1000 + Math.random() * 9000);
-      const activeTxId = activeTab === 'retail' 
-          ? `RET-${uniqueSuffix}` 
-          : (editingInvoiceId ? editingInvoiceId : `INV-${uniqueSuffix}`);
+      
+      // 🔥 FIX: Check for editingInvoiceId FIRST, so both Retail and Wholesale keep their original IDs when editing!
+      const activeTxId = editingInvoiceId 
+          ? editingInvoiceId 
+          : (activeTab === 'retail' ? `RET-${uniqueSuffix}` : `INV-${uniqueSuffix}`);
 
       let primaryMethodStr = effectiveSplits.map(s => {
         if (s.method === 'Unpaid / Debt') return s.method;
