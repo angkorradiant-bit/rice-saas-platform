@@ -512,22 +512,21 @@ export default function POSPage() {
     checkDeviceType();
     window.addEventListener('resize', checkDeviceType);
 
-    // 💣 SECURITY WIPE: Destroy active carts, UI overrides, and edit sessions
-    // when switching branches to prevent Cross-Tenant Checkout Corruption!
-    setCart([]);
-    setSelectedCustomerId('');
-    setCartCustomerNameOverride('');
-    setPaymentRows([{ id: Date.now(), method: 'Cash ៛', amount: '', isAuto: true }]);
-    setEditingInvoiceId(null);
-    setActiveFullScreen('none');
-    
-    // 🔥 If they switch branches while editing, instantly drop the URL parameter
-    if (typeof window !== 'undefined' && window.location.search.includes('edit=')) {
-      window.history.replaceState({}, document.title, window.location.pathname);
+    // 🟢 CAPTURE URL FIRST BEFORE ANYTHING ELSE WIPES IT
+    const urlParams = new URLSearchParams(window.location.search);
+    const editId = urlParams.get('edit');
+
+    // 💣 SECURITY WIPE: Only destroy active carts if we are NOT loading an edit session
+    if (!editId) {
+      setCart([]);
+      setSelectedCustomerId('');
+      setCartCustomerNameOverride('');
+      setPaymentRows([{ id: Date.now(), method: 'Cash ៛', amount: '', isAuto: true }]);
+      setEditingInvoiceId(null);
+      setActiveFullScreen('none');
     }
 
     const stabilizeConnection = async () => {
-      // 🔥 FIX: Ensures data fetches immediately regardless of hydration delay
       try {
         await loadProductsAndSettings()
         await loadCustomers()
@@ -536,19 +535,18 @@ export default function POSPage() {
         await loadSuppliers()
         await loadMixHistory()
 
-        const urlParams = new URLSearchParams(window.location.search);
-        const editId = urlParams.get('edit');
         if (editId) {
           setEditingInvoiceId(editId);
           
-          // 🔥 NEW: Detect if we are editing a Retail or Wholesale invoice!
-          const isRetailEdit = editId.startsWith('RET-');
+          // 🔥 DETECT IF THIS IS A RETAIL OR WHOLESALE INVOICE
+          const isRetailEdit = editId.startsWith('RET-') || editId.startsWith('ret-');
           setActiveTab(isRetailEdit ? 'retail' : 'wholesale'); 
           
           const targetTable = isRetailEdit ? 'retail_sales' : 'sales';
           const targetColumn = isRetailEdit ? 'transaction_id' : 'invoice_id';
 
-          const { data: saleRows } = await supabase.from(targetTable).select('*').eq(targetColumn, editId);
+          const { data: saleRows } = await supabase.from(targetTable).select('*').eq(targetColumn, editId).eq('branch_id', activeBranchId);
+          
           if (saleRows && saleRows.length > 0) {
             const rebuiltCart = saleRows.map((row: any, index: number) => { // 🔥 ADDED INDEX
               const isSpecialRow = (row.custom_rice_type || row.rice_type).includes('ដូរ') || (row.custom_rice_type || row.rice_type).includes('បានប្រើ') || (row.custom_rice_type || row.rice_type).includes('បញ្ចុះតម្លៃ') || (row.custom_rice_type || row.rice_type).includes('កក់') || (row.custom_rice_type || row.rice_type).includes('ថ្លៃបាវ') || (row.custom_rice_type || row.rice_type).includes('បាវ');
@@ -2311,7 +2309,7 @@ export default function POSPage() {
           
           {/* 🟢 STICKY HEADER WRAPPER AROUND TITLE, TABS & SEARCH */}
           <div className="pos-sticky-header">
-            <div className="header-container" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center' }}>
+            <div className="header-container" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div className="header-left" style={{ flex: 1, minWidth: 0, marginRight: '12px' }}>
                 <h1 className="saas-page-title" style={{ margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {editingInvoiceId ? `✏️ Editing: ${editingInvoiceId}` : `🛒 ${currentT.title}`}
@@ -2321,7 +2319,7 @@ export default function POSPage() {
                 <button 
                   onClick={cancelEditMode} 
                   className="saas-btn saas-btn-danger"
-                  style={{ flexShrink: 0, padding: '6px 12px', fontSize: '13px' }}
+                  style={{ flexShrink: 0, padding: '6px 16px', fontSize: '13px', fontWeight: 'bold' }}
                 >
                   ❌ Cancel
                 </button>
@@ -5042,10 +5040,11 @@ export default function POSPage() {
           align-items: center; 
           margin-bottom: 24px; 
           margin-top: 0;
-          margin-left: 60px;
+          margin-left: 60px; 
           gap: 12px;
           min-height: 48px; 
-          width: 100%;
+          width: calc(100% - 60px); /* 🔥 THIS MATH FIXES THE OVERFLOW UNDER THE CART! */
+          box-sizing: border-box;
         }
         
         .header-left {

@@ -540,20 +540,21 @@ export default function BizDatabase() {
           <button 
             onClick={() => exportToExcel(processedTransactions, `Sales-Export-Branch-${activeBranchId}-${timeFilter}.csv`)} 
             className="saas-btn"
-            style={{ background: '#10b981', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}
+            style={{ background: '#10b981', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px' }}
             title="Export current view to Excel CSV"
           >
             <span>📊</span>
-            <span>Export Excel</span>
+            <span className="hide-on-mobile">Export Excel</span>
           </button>
 
           {selectedToDelete.size > 0 && (
-            <button onClick={handleDelete} className="saas-btn saas-btn-danger">
-              🗑️ Delete ({selectedToDelete.size})
+            <button onClick={handleDelete} className="saas-btn saas-btn-danger" style={{ padding: '8px 12px' }}>
+              🗑️ <span className="hide-on-mobile">Delete</span> ({selectedToDelete.size})
             </button>
           )}
-          <button className="saas-btn saas-btn-secondary" onClick={() => fetchData(false)}>
-            {isLoading ? 'Loading...' : 'Refresh Data'}
+          <button className="saas-btn saas-btn-secondary" onClick={() => fetchData(false)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px' }} title="Refresh Data">
+            <span>{isLoading ? '⏳' : '🔄'}</span>
+            <span className="hide-on-mobile">{isLoading ? 'Loading...' : 'Refresh Data'}</span>
           </button>
         </div>
       </div>
@@ -732,6 +733,9 @@ export default function BizDatabase() {
 
       {/* --- PRESERVED PAGE-SPECIFIC UTILITY STYLES --- */}
       <style jsx global>{`
+        /* 🔥 NEW: Cleanly hides text inside buttons on small screens */
+        .hide-on-mobile { display: inline; }
+
         .toolbar-bottom-row { display: flex; width: 100%; gap: 12px; flex-wrap: wrap; align-items: center; }
         .time-filters-wrapper { display: flex; background: #f1f5f9; padding: 4px; border-radius: 8px; gap: 4px; }
         .record-count-badge { margin-bottom: 12px; color: #64748b; font-size: 13px; font-weight: bold; }
@@ -756,6 +760,9 @@ export default function BizDatabase() {
         .header-left { display: flex; align-items: center; gap: 12px; }
 
         @media (max-width: 1023px) {
+          /* 🔥 Drops the text on mobile so only the icons remain */
+          .hide-on-mobile { display: none !important; }
+
           .header-container { margin-left: 54px !important; margin-right: 0 !important; margin-bottom: 24px !important; margin-top: 0 !important; display: flex !important; flex-direction: row !important; justify-content: space-between !important; align-items: center !important; height: 44px !important; width: calc(100% - 54px) !important; }
           .header-left { display: flex !important; flex-direction: row !important; align-items: center !important; gap: 12px !important; }
           .toolbar-bottom-row { flex-direction: column; align-items: stretch; }
