@@ -11,8 +11,8 @@ import TableSkeleton from '@/components/TableSkeleton'
 import EmptyState from '@/components/EmptyState'
 import { useBranch } from '@/components/BranchContext' // 🔥 GLOBAL MEMORY IMPORTED
 import AdminGuard from '@/components/AdminGuard' // 🔒 NEW: IMPORT THE BOUNCER
+import Modal from '@/components/Modal'
 import { exportBizDataToExcel } from '@/utils/exportHelpers';
-
 
 // Formats headers beautifully
 const formatHeader = (key: string) => {
@@ -78,6 +78,8 @@ export default function BizDatabase() {
   const debouncedSearch = useDebounce(searchQuery, 300)
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('Today')
   const [isLoading, setIsLoading] = useState(true)
+  // --- EXPORT STATE ---
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   // --- SELECTION STATE ---
   const [selectedToDelete, setSelectedToDelete] = useState<Set<string>>(new Set())
@@ -539,14 +541,13 @@ export default function BizDatabase() {
         </div>
         <div className="header-actions" style={{ display: 'flex', gap: '12px' }}>
           <button 
-            /* 🔥 FIX: Now uses the new function and passes 'transactions' so all tabs are built! */
-            onClick={() => exportBizDataToExcel(transactions, `Full-Biz-Report-Branch-${activeBranchId}-${timeFilter}.xlsx`)} 
+            onClick={() => setIsExportModalOpen(true)} 
             className="saas-btn"
             style={{ background: '#10b981', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px' }}
-            title="Export full database to Multi-Tab Excel"
+            title="Export Options"
           >
-            <span>📊</span>
-            <span className="hide-on-mobile">Export Excel</span>
+            <span>📤</span>
+            <span className="hide-on-mobile">Export Data</span>
           </button>
 
           {selectedToDelete.size > 0 && (
@@ -733,6 +734,43 @@ export default function BizDatabase() {
         </div>
       </div>
 
+      {/* 🟢 EXPORT POPUP MODAL */}
+      <Modal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} title="Export Database" icon="📤" maxWidth="400px">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+          
+          <button 
+            onClick={() => {
+              exportBizDataToExcel(transactions, `Full-Biz-Report-Branch-${activeBranchId}-${timeFilter}.xlsx`);
+              setIsExportModalOpen(false);
+            }} 
+            className="saas-btn" 
+            style={{ background: '#10b981', color: '#fff', padding: '16px', fontSize: '15px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', height: 'auto' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold' }}>
+              <span>📊</span> Download Excel (.xlsx)
+            </div>
+            <div style={{ fontSize: '11px', fontWeight: 'normal', opacity: 0.9 }}>Exports all 3 tabs (Wholesale, Retail, Expenses)</div>
+          </button>
+
+          <button 
+            onClick={() => {
+              setIsExportModalOpen(false);
+              // Wait a fraction of a second for the modal to close before triggering the PDF print dialog
+              setTimeout(() => window.print(), 300);
+            }} 
+            className="saas-btn saas-btn-primary" 
+            style={{ padding: '16px', fontSize: '15px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', height: 'auto' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold' }}>
+              <span>📄</span> Print / Save as PDF
+            </div>
+            <div style={{ fontSize: '11px', fontWeight: 'normal', opacity: 0.9 }}>Captures the currently visible table perfectly</div>
+          </button>
+
+        </div>
+        <button onClick={() => setIsExportModalOpen(false)} className="saas-btn saas-btn-secondary" style={{ width: '100%' }}>Cancel</button>
+      </Modal>
+
       {/* --- PRESERVED PAGE-SPECIFIC UTILITY STYLES --- */}
       <style jsx global>{`
         /* 🔥 NEW: Cleanly hides text inside buttons on small screens */
@@ -753,18 +791,24 @@ export default function BizDatabase() {
         .badge-status { color: #64748b; font-style: italic; }
 
         .cell-display { padding: 14px 12px; width: 100%; height: 100%; box-sizing: border-box; display: flex; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .cell-input { width: 100%; height: 100%; padding: 14px 12px; font-size: 14px; border: none; outline: 2px solid #b58a3d; box-shadow: 0 0 5px rgba(181, 138, 61, 0.3); background: #fff; position: absolute; top: 0; left: 0; z-index: 20; box-sizing: border-box; color: #0f172a; }
-        .cell-editing { z-index: 20; position: relative; }
-        input[type="number"].no-spinners::-webkit-inner-spin-button, input[type="number"].no-spinners::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-        input[type="number"].no-spinners { -moz-appearance: textfield; }
-
+        
         .header-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; margin-top: 0; margin-left: 60px; gap: 12px; height: 42px; width: calc(100% - 60px); max-width: 1600px; }
         .header-left { display: flex; align-items: center; gap: 12px; }
 
-        @media (max-width: 1023px) {
-          /* 🔥 Drops the text on mobile so only the icons remain */
-          .hide-on-mobile { display: none !important; }
+        /* 🔥 PDF EXPORT CLEANUP: Hides sidebars and UI controls when generating the PDF */
+        @media print {
+          body { background: white; }
+          .header-actions, .saas-card, .time-filters-wrapper, .record-count-badge, .biz-checkbox, .resizer-handle { display: none !important; }
+          .main-wrapper { padding: 0 !important; margin: 0 !important; height: auto !important; overflow: visible !important; }
+          .saas-table-wrapper { flex: none !important; height: auto !important; overflow: visible !important; }
+          .saas-table-responsive { overflow: visible !important; }
+          .saas-table { width: 100% !important; border-collapse: collapse !important; }
+          .saas-th, .saas-td { border: 1px solid #e2e8f0 !important; font-size: 10pt !important; padding: 8px !important; }
+          .saas-th { background-color: #f8fafc !important; color: #000 !important; }
+        }
 
+        @media (max-width: 1023px) {
+          .hide-on-mobile { display: none !important; }
           .header-container { margin-left: 54px !important; margin-right: 0 !important; margin-bottom: 24px !important; margin-top: 0 !important; display: flex !important; flex-direction: row !important; justify-content: space-between !important; align-items: center !important; height: 44px !important; width: calc(100% - 54px) !important; }
           .header-left { display: flex !important; flex-direction: row !important; align-items: center !important; gap: 12px !important; }
           .toolbar-bottom-row { flex-direction: column; align-items: stretch; }
