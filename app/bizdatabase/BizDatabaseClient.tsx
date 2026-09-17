@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { formatRiel, formatUSD, formatNumber, EXCHANGE_RATE } from '@/utils/formatters'
@@ -66,6 +66,59 @@ const DEFAULT_SUMMARY_COLS = ['invoice_id', 'created_at', 'customer_name', 'owne
 const DEFAULT_DAILY_COLS = ['invoice_id', 'created_at', 'customer_name', 'owner', 'rice_type', 'qty', 'price_per_bag', 'cogs_price', 'total_sales', 'total_cogs', 'total_profit'];
 const DEFAULT_RETAIL_COLS = ['transaction_id', 'created_at', 'rice_type', 'qty', 'price_per_bag', 'cogs_price', 'total_sales', 'total_cogs', 'total_profit'];
 const DEFAULT_EXPENSE_COLS = ['created_at', 'description', 'amount_riel', 'amount_usd', 'category', 'status', 'owner'];
+
+// 🔥 PERFORMANCE FIX: React.memo prevents the entire table from redrawing when you click a single checkbox!
+const MemoizedTableRow = React.memo(({ t, activeColumns, isRowSelected, toggleSelect }: any) => {
+  const formatDate = (dateString: string) => {
+    const d = new Date(dateString)
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
+
+  return (
+    <tr className={`saas-tr ${isRowSelected ? 'selected' : ''}`}>
+      <td className="saas-td" style={{ textAlign: 'center', borderRight: '1px solid #f1f5f9', padding: '14px 12px' }}>
+        <input 
+          type="checkbox" 
+          className="biz-checkbox"
+          checked={isRowSelected} 
+          onChange={() => toggleSelect(t.id)} 
+        />
+      </td>
+
+      {activeColumns.map((col: string) => {
+        const val = t[col] ?? '';
+
+        return (
+          <td key={col} className="saas-td" style={{ padding: 0, borderRight: '1px solid #f1f5f9', position: 'relative' }}>
+            <div className="cell-display" style={{ cursor: 'default' }}>
+              {['invoice_id', 'transaction_id', 'customer_name', 'rice_types', 'rice_type', 'description'].includes(col) && (
+                <span style={{ fontWeight: ['invoice_id', 'transaction_id'].includes(col) ? 'bold' : 'normal', color: ['invoice_id', 'transaction_id'].includes(col) ? '#1e293b' : 'inherit' }}>
+                  {val || '-'}
+                </span>
+              )}
+              
+              {col === 'owner' && <span className="badge-owner">{val || '-'}</span>}
+              {col === 'category' && <span className="badge-category">{val || '-'}</span>}
+              {col === 'status' && <span className="badge-status">{val || '-'}</span>}
+              
+              {col === 'created_at' && formatDate(t.created_at)}
+              {col === 'qty' && formatNumber(val || 0)}
+
+              {['price_per_bag', 'cogs_price', 'total_sales', 'total_cogs', 'total_profit', 'amount_riel', 'amount_usd'].includes(col) && (
+                <span style={{ 
+                  fontWeight: 'bold', 
+                  color: (col === 'total_profit' && val < 0) || col === 'total_cogs' || col === 'cogs_price' || col === 'amount_riel' || col === 'amount_usd' ? '#ef4444' : '#10b981' 
+                }}>
+                  {col === 'amount_usd' ? formatUSD(val || 0) : formatRiel(val || 0)}
+                </span>
+              )}
+            </div>
+          </td>
+        )
+      })}
+    </tr>
+  )
+});
 
 export default function BizDatabase() {
   const { showToast } = useToast();
@@ -482,32 +535,35 @@ export default function BizDatabase() {
   }
 
   // --- DATA PROCESSING (USING DEBOUNCED SEARCH!) ---
-  const processedTransactions = transactions
-    .filter(t => {
-      if (t.source !== activeTab) return false;
+  // 🔥 PERFORMANCE FIX: Caches the heavy sorting/filtering engine
+  const processedTransactions = useMemo(() => {
+    return transactions
+      .filter(t => {
+        if (t.source !== activeTab) return false;
 
-      if (debouncedSearch) {
-        const query = debouncedSearch.toLowerCase()
-        const searchableText = `${t.invoice_id || ''} ${t.transaction_id || ''} ${t.customer_name || ''} ${t.rice_types || ''} ${t.rice_type || ''} ${t.description || ''} ${t.category || ''}`.toLowerCase()
-        if (!searchableText.includes(query)) return false
-      }
+        if (debouncedSearch) {
+          const query = debouncedSearch.toLowerCase()
+          const searchableText = `${t.invoice_id || ''} ${t.transaction_id || ''} ${t.customer_name || ''} ${t.rice_types || ''} ${t.rice_type || ''} ${t.description || ''} ${t.category || ''}`.toLowerCase()
+          if (!searchableText.includes(query)) return false
+        }
 
-      return true
-    })
-    .sort((a, b) => {
-      if (!sortConfig) return 0;
-      const { key, direction } = sortConfig;
-      
-      let valA = a[key];
-      let valB = b[key];
-      
-      if (valA === undefined || valA === null) valA = '';
-      if (valB === undefined || valB === null) valB = '';
+        return true
+      })
+      .sort((a, b) => {
+        if (!sortConfig) return 0;
+        const { key, direction } = sortConfig;
+        
+        let valA = a[key];
+        let valB = b[key];
+        
+        if (valA === undefined || valA === null) valA = '';
+        if (valB === undefined || valB === null) valB = '';
 
-      if (valA < valB) return direction === 'asc' ? -1 : 1;
-      if (valA > valB) return direction === 'asc' ? 1 : -1;
-      return 0;
-    })
+        if (valA < valB) return direction === 'asc' ? -1 : 1;
+        if (valA > valB) return direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+  }, [transactions, activeTab, debouncedSearch, sortConfig]);
 
   // --- HELPERS ---
   const formatDate = (dateString: string) => {
@@ -555,10 +611,6 @@ export default function BizDatabase() {
               🗑️ <span className="hide-on-mobile">Delete</span> ({selectedToDelete.size})
             </button>
           )}
-          <button className="saas-btn saas-btn-secondary" onClick={() => fetchData(false)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px' }} title="Refresh Data">
-            <span>{isLoading ? '⏳' : '🔄'}</span>
-            <span className="hide-on-mobile">{isLoading ? 'Loading...' : 'Refresh Data'}</span>
-          </button>
         </div>
       </div>
 
@@ -676,58 +728,15 @@ export default function BizDatabase() {
                   </td>
                 </tr>
               ) : (
-                processedTransactions.map(t => {
-                  const isRowSelected = selectedToDelete.has(t.id);
-                  
-                  return (
-                    <tr key={t.id} className={`saas-tr ${isRowSelected ? 'selected' : ''}`}>
-                      <td className="saas-td" style={{ textAlign: 'center', borderRight: '1px solid #f1f5f9', padding: '14px 12px' }}>
-                        <input 
-                          type="checkbox" 
-                          className="biz-checkbox"
-                          checked={isRowSelected} 
-                          onChange={() => toggleSelect(t.id)} 
-                        />
-                      </td>
-
-                      {activeColumns.map(col => {
-                        const val = t[col] ?? '';
-
-                        return (
-                          <td 
-                            key={col} 
-                            className="saas-td"
-                            style={{ padding: 0, borderRight: '1px solid #f1f5f9', position: 'relative' }}
-                          >
-                            <div className="cell-display" style={{ cursor: 'default' }}>
-                              {['invoice_id', 'transaction_id', 'customer_name', 'rice_types', 'rice_type', 'description'].includes(col) && (
-                                <span style={{ fontWeight: ['invoice_id', 'transaction_id'].includes(col) ? 'bold' : 'normal', color: ['invoice_id', 'transaction_id'].includes(col) ? '#1e293b' : 'inherit' }}>
-                                  {val || '-'}
-                                </span>
-                              )}
-                              
-                              {col === 'owner' && <span className="badge-owner">{val || '-'}</span>}
-                              {col === 'category' && <span className="badge-category">{val || '-'}</span>}
-                              {col === 'status' && <span className="badge-status">{val || '-'}</span>}
-                              
-                              {col === 'created_at' && formatDate(t.created_at)}
-                              {col === 'qty' && formatNumber(val || 0)}
-
-                              {['price_per_bag', 'cogs_price', 'total_sales', 'total_cogs', 'total_profit', 'amount_riel', 'amount_usd'].includes(col) && (
-                                <span style={{ 
-                                  fontWeight: 'bold', 
-                                  color: (col === 'total_profit' && val < 0) || col === 'total_cogs' || col === 'cogs_price' || col === 'amount_riel' || col === 'amount_usd' ? '#ef4444' : '#10b981' 
-                                }}>
-                                  {col === 'amount_usd' ? formatUSD(val || 0) : formatRiel(val || 0)}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  )
-                })
+                processedTransactions.map(t => (
+                  <MemoizedTableRow 
+                    key={t.id} 
+                    t={t} 
+                    activeColumns={activeColumns} 
+                    isRowSelected={selectedToDelete.has(t.id)} 
+                    toggleSelect={toggleSelect} 
+                  />
+                ))
               )}
             </tbody>
           </table>

@@ -221,6 +221,7 @@ export default function POSPage() {
   const [riceCategories, setRiceCategories] = useState<string[]>(RICE_CATEGORIES)
   const [isCategorySettingsOpen, setIsCategorySettingsOpen] = useState(false);
   const [isVisibilitySettingsOpen, setIsVisibilitySettingsOpen] = useState(false);
+  const [visibilitySearch, setVisibilitySearch] = useState(''); // 🔥 NEW: Search state for the settings modal
 
   const EyeIcon = () => (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -452,24 +453,27 @@ export default function POSPage() {
     }
   }, [cart, selectedCustomerId, cartCustomerNameOverride, activeTab, retailPriceSort, isPosMounted, editingInvoiceId, activeBranchId]);
 
-  const totalRiel = cart.reduce((sum, item) => {
-    const isNegativeItem = 
-      item.custom_name.includes('ដូរ') || 
-      item.custom_name.includes('បញ្ចុះតម្លៃ') || 
-      item.custom_name.includes('កក់');
-      
-    const price = Number(item.custom_price_riel) || 0;
-    const qty = Number(item.quantity) || 0;
-    const itemTotal = price * qty;
-    return isNegativeItem ? sum - Math.abs(itemTotal) : sum + itemTotal;
-  }, 0);
+  // 🔥 PERFORMANCE FIX: Cache the heavy reduce loop so it only runs when the cart actually changes
+  const totalRiel = React.useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const isNegativeItem = 
+        item.custom_name.includes('ដូរ') || 
+        item.custom_name.includes('បញ្ចុះតម្លៃ') || 
+        item.custom_name.includes('កក់');
+        
+      const price = Number(item.custom_price_riel) || 0;
+      const qty = Number(item.quantity) || 0;
+      const itemTotal = price * qty;
+      return isNegativeItem ? sum - Math.abs(itemTotal) : sum + itemTotal;
+    }, 0);
+  }, [cart]);
 
-  const totalUSD = totalRiel / EXCHANGE_RATE; 
+  const totalUSD = React.useMemo(() => totalRiel / EXCHANGE_RATE, [totalRiel]); 
 
-  const isCartValid = cart.length > 0 && cart.every(item => 
+  const isCartValid = React.useMemo(() => cart.length > 0 && cart.every(item => 
     item.quantity !== '' && Number(item.quantity) > 0 && 
     item.custom_price_riel !== '' && Number(item.custom_price_riel) >= 0
-  );
+  ), [cart]);
 
   useEffect(() => {
     const loadImages = async () => {
@@ -2101,88 +2105,95 @@ export default function POSPage() {
   const handleNativePrint = () => { window.print(); }
 
   const currentT = t[lang] || t['en'];
-  // 🔥 Keeps Bags paired with their Rice, while keeping Returns at top and Discounts at bottom
-  const sortedCart = [...cart].sort((a, b) => {
-    const getPriority = (item: CartItem) => {
-      const name = item.custom_name || item.name || '';
-      if (name.includes('ដូរ')) return -2;
-      if (name.includes('បានប្រើ')) return -1;
-      if (name.includes('បញ្ចុះតម្លៃ') || name.includes('កក់')) return 999;
-      return 0; // Regular rice and bags stay in their exact paired sequence
-    };
-    const pA = getPriority(a);
-    const pB = getPriority(b);
-    if (pA !== pB) return pA - pB;
-    return (a.sortOrder || 0) - (b.sortOrder || 0);
-  });
+  
+  // 🔥 PERFORMANCE FIX: Cache the Cart Sort so typing quantities is perfectly smooth
+  const sortedCart = React.useMemo(() => {
+    return [...cart].sort((a, b) => {
+      const getPriority = (item: CartItem) => {
+        const name = item.custom_name || item.name || '';
+        if (name.includes('ដូរ')) return -2;
+        if (name.includes('បានប្រើ')) return -1;
+        if (name.includes('បញ្ចុះតម្លៃ') || name.includes('កក់')) return 999;
+        return 0; // Regular rice and bags stay in their exact paired sequence
+      };
+      const pA = getPriority(a);
+      const pB = getPriority(b);
+      if (pA !== pB) return pA - pB;
+      return (a.sortOrder || 0) - (b.sortOrder || 0);
+    });
+  }, [cart]);
 
-  const orderedProducts = [...products].sort((a, b) => {
-    const idxA = productOrder.indexOf(a.id);
-    const idxB = productOrder.indexOf(b.id);
-    if (idxA === -1 && idxB === -1) return a.id - b.id;
-    if (idxA === -1) return 1;
-    if (idxB === -1) return -1;
-    return idxA - idxB;
-  });
+  // 🔥 PERFORMANCE FIX: The Massive Grid Cache. This prevents the entire product board from reloading when you click the cart!
+  const filteredProducts = React.useMemo(() => {
+    // 1. Initial Order
+    const ordered = [...products].sort((a, b) => {
+      const idxA = productOrder.indexOf(a.id);
+      const idxB = productOrder.indexOf(b.id);
+      if (idxA === -1 && idxB === -1) return a.id - b.id;
+      if (idxA === -1) return 1;
+      if (idxB === -1) return -1;
+      return idxA - idxB;
+    });
 
-  const filteredProducts = orderedProducts.filter(p => {
-    if (searchQuery && !p.name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    const weightVal = parseFloat(String(p.weight) || '0');
-    
-    // 🔥 ARCHITECTURE FIX: 1kg is strictly Retail (Loose). Anything heavier is Wholesale (Sealed Bag).
-    if (activeTab === 'wholesale' && weightVal <= 1) return false; 
-    if (activeTab === 'retail' && weightVal > 1) return false;
-
-    // 🔥 MASTER VISIBILITY LOGIC (Linked to the Eye Toggle)
-    const isHidden = hiddenRetailIds.includes(p.id);
-
-    if (activeTab === 'retail') {
-      if (retailSubTab === 'active' && isHidden) return false;
-      if (retailSubTab === 'inactive' && !isHidden) return false;
-    }
-
-    if (activeTab === 'wholesale') {
-      if (isHidden) return false; // Hide completely from wholesale if the eye is red!
-      if (activeCategory === '❌ Out of Stock') return Number(p.stock) <= 0;
-    }
-
-    if (activeTab !== 'retail' && activeCategory !== 'All' && activeCategory !== '❌ Out of Stock') {
-      if (activeCategory === '🔥 Hot') {
-        const top10Ids = Object.entries(mtdSalesStats).sort(([,a], [,b]) => b - a).slice(0, 10).map(([id]) => Number(id));
-        return top10Ids.includes(p.id);
-      }
+    // 2. Filter
+    const filtered = ordered.filter(p => {
+      if (searchQuery && !p.name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      const weightVal = parseFloat(String(p.weight) || '0');
       
-      const name = p.name || '';
-      if (activeCategory === 'ផ្សេងៗ') {
-        if (MAIN_KEYWORDS.some(kw => name.includes(kw))) return false;
-      } else {
-        if (!name.includes(activeCategory)) return false;
+      if (activeTab === 'wholesale' && weightVal <= 1) return false; 
+      if (activeTab === 'retail' && weightVal > 1) return false;
+
+      const isHidden = hiddenRetailIds.includes(p.id);
+
+      if (activeTab === 'retail') {
+        if (retailSubTab === 'active' && isHidden) return false;
+        if (retailSubTab === 'inactive' && !isHidden) return false;
+      }
+
+      if (activeTab === 'wholesale') {
+        if (isHidden) return false; 
+        if (activeCategory === '❌ Out of Stock') return Number(p.stock) <= 0;
+      }
+
+      if (activeTab !== 'retail' && activeCategory !== 'All' && activeCategory !== '❌ Out of Stock') {
+        if (activeCategory === '🔥 Hot') {
+          const top10Ids = Object.entries(mtdSalesStats).sort(([,a], [,b]) => b - a).slice(0, 10).map(([id]) => Number(id));
+          return top10Ids.includes(p.id);
+        }
+        
+        const name = p.name || '';
+        if (activeCategory === 'ផ្សេងៗ') {
+          if (MAIN_KEYWORDS.some(kw => name.includes(kw))) return false;
+        } else {
+          if (!name.includes(activeCategory)) return false;
+        }
+      }
+      return true;
+    });
+
+    // 3. Final Sort
+    if (activeTab === 'wholesale') {
+      filtered.sort((a, b) => {
+        const cogsA = Number(activeBatches[a.id]?.[0]?.cost_price || a.cost_price || 0);
+        const cogsB = Number(activeBatches[b.id]?.[0]?.cost_price || b.cost_price || 0);
+        return cogsB - cogsA;
+      });
+
+      if (activeCategory === '🔥 Hot') {
+        filtered.sort((a, b) => (mtdSalesStats[b.id] || 0) - (mtdSalesStats[a.id] || 0));
       }
     }
-    return true;
-  });
 
-  // 🔥 SORT BY COGS: Highest cost rice at top, lowest at bottom (FOR WHOLESALE)
-  if (activeTab === 'wholesale') {
-    filteredProducts.sort((a, b) => {
-      const cogsA = Number(activeBatches[a.id]?.[0]?.cost_price || a.cost_price || 0);
-      const cogsB = Number(activeBatches[b.id]?.[0]?.cost_price || b.cost_price || 0);
-      return cogsB - cogsA;
-    });
-
-    if (activeCategory === '🔥 Hot') {
-      filteredProducts.sort((a, b) => (mtdSalesStats[b.id] || 0) - (mtdSalesStats[a.id] || 0));
+    if (activeTab === 'retail' && retailPriceSort !== 'none') {
+      filtered.sort((a, b) => {
+        const priceA = Number(a.price || 0);
+        const priceB = Number(b.price || 0);
+        return retailPriceSort === 'asc' ? priceA - priceB : priceB - priceA;
+      });
     }
-  }
 
-  // 🔥 NEW: SORT RETAIL PRICE BASED ON STATE
-  if (activeTab === 'retail' && retailPriceSort !== 'none') {
-    filteredProducts.sort((a, b) => {
-      const priceA = Number(a.price || 0);
-      const priceB = Number(b.price || 0);
-      return retailPriceSort === 'asc' ? priceA - priceB : priceB - priceA;
-    });
-  }
+    return filtered;
+  }, [products, productOrder, searchQuery, activeTab, activeCategory, hiddenRetailIds, retailSubTab, mtdSalesStats, retailPriceSort, activeBatches]);
 
   const filteredCustomers = customers.filter(c => 
     (c.name || '').toLowerCase().includes(customerSearchTerm.toLowerCase()) || (c.phone || '').includes(customerSearchTerm)
@@ -2193,11 +2204,14 @@ export default function POSPage() {
   const isSimpleCustomer = !selectedCustomer || ['walk-in', 'walk in', 'mom'].includes((selectedCustomer?.name || '').toLowerCase());
   const showPaymentSelector = activeTab === 'retail' || isSimpleCustomer;
 
-  const liveTotalReceivedInRiel = paymentRows.reduce((sum, row) => {
-    const amt = Number(row.amount) || 0;
-    if (row.method.includes('$')) return sum + (amt * EXCHANGE_RATE);
-    return sum + amt;
-  }, 0);
+  // 🔥 PERFORMANCE FIX: Prevent payment math from recalculating 100 times when you type an amount
+  const liveTotalReceivedInRiel = React.useMemo(() => {
+    return paymentRows.reduce((sum, row) => {
+      const amt = Number(row.amount) || 0;
+      if (row.method.includes('$')) return sum + (amt * EXCHANGE_RATE);
+      return sum + amt;
+    }, 0);
+  }, [paymentRows]);
 
   const hasValidPayment = !showPaymentSelector || liveTotalReceivedInRiel >= totalRiel;
 
@@ -4753,25 +4767,48 @@ export default function POSPage() {
       )}
 
       {/* ⚙️ POS VISIBILITY SETTINGS MODAL */}
-      <Modal isOpen={isVisibilitySettingsOpen} onClose={() => setIsVisibilitySettingsOpen(false)} title={`⚙️ Manage ${activeTab === 'retail' ? 'Retail' : 'Wholesale'} Visibility`} maxWidth="400px">
-        <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '16px', marginTop: 0 }}>Click the eye to hide/unhide products. Items are sorted by Rice Type, then Price (High to Low).</p>
+      <Modal isOpen={isVisibilitySettingsOpen} onClose={() => { setIsVisibilitySettingsOpen(false); setVisibilitySearch(''); }} title={`⚙️ Manage ${activeTab === 'retail' ? 'Retail' : 'Wholesale'} Visibility`} maxWidth="400px">
+        <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '12px', marginTop: 0 }}>Click the eye to hide/unhide products. Hidden items will drop to the bottom.</p>
         
-        <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '60vh', overflowY: 'auto', paddingRight: '4px', paddingBottom: '10px' }}>
+        {/* 🔥 NEW: Search Bar inside the Settings Modal */}
+        <div style={{ position: 'relative', marginBottom: '16px' }}>
+          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: '14px' }}>🔍</span>
+          <input
+            type="text"
+            placeholder="Search products..."
+            value={visibilitySearch}
+            onChange={(e) => setVisibilitySearch(e.target.value)}
+            className="saas-input"
+            style={{ width: '100%', paddingLeft: '34px', fontSize: '14px', boxSizing: 'border-box' }}
+          />
+        </div>
+
+        <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '55vh', overflowY: 'auto', paddingRight: '4px', paddingBottom: '10px' }}>
           {products
             .filter(p => {
               // Ensure we only show the current tab's products
               const weightVal = parseFloat(String(p.weight) || '0');
               if (activeTab === 'wholesale' && weightVal <= 1) return false; 
               if (activeTab === 'retail' && weightVal > 1) return false;
+              
+              // 🔥 NEW: Search filter
+              if (visibilitySearch && !p.name.toLowerCase().includes(visibilitySearch.toLowerCase())) return false;
+              
               return true;
             })
             .sort((a, b) => {
-              // 1. Sort by Rice Type Category (Keyword Algorithm)
+              // 🔥 NEW: 1. Hidden items always drop to the absolute bottom!
+              const isHiddenA = hiddenRetailIds.includes(a.id);
+              const isHiddenB = hiddenRetailIds.includes(b.id);
+              if (isHiddenA && !isHiddenB) return 1;
+              if (!isHiddenA && isHiddenB) return -1;
+
+              // 2. Sort by Rice Type Category (Keyword Algorithm)
               const idxA = getKeywordIndex(a.name);
               const idxB = getKeywordIndex(b.name);
               if (idxA !== idxB) return idxA - idxB;
 
-              // 2. Sort by Price (HIGH TO LOW)
+              // 3. Sort by Price (HIGH TO LOW)
               const priceA = activeTab === 'retail' ? Number(a.price || 0) : Number(a.cost_price || 0);
               const priceB = activeTab === 'retail' ? Number(b.price || 0) : Number(b.cost_price || 0);
               return priceB - priceA; 
