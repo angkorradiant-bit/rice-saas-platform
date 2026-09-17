@@ -614,7 +614,8 @@ export default function InvoiceGallery() {
                             🚨 Void
                           </button>
                         )}
-                        {!isVoided && !inv.is_retail && (
+                       {/* 🔥 FIX: Removed !inv.is_retail to allow editing Retail Invoices */}
+                        {!isVoided && (
                           <button onClick={(e) => { e.stopPropagation(); window.location.href = `/pos?edit=${inv.invoice_id}`; }} className="saas-btn" style={{ flex: 1, padding: '8px 4px', background: '#fef3c7', color: '#b45309', border: '1px solid #fde047' }}>
                             Edit
                           </button>
@@ -679,7 +680,8 @@ export default function InvoiceGallery() {
                           <td className="saas-td" style={{ color: '#475569' }}>{formatDate(inv.created_at)}</td>
                           <td className="saas-td" style={{ textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                              {!isVoided && !inv.is_retail && (
+                              {/* 🔥 FIX: Removed !inv.is_retail to allow editing Retail Invoices */}
+                              {!isVoided && (
                                 <button onClick={(e) => { e.stopPropagation(); window.location.href = `/pos?edit=${inv.invoice_id}`; }} className="saas-btn" style={{ padding: '6px 12px', background: '#fef3c7', color: '#b45309', border: 'none', fontSize: '12px' }}>Edit</button>
                               )}
                               {inv.invoice_url && (
