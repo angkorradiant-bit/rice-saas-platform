@@ -293,7 +293,7 @@ export default function POSPage() {
 
   // 🟢 NEW: IMPORT STOCK STATES
   const [suppliers, setSuppliers] = useState<any[]>([]);
-  const [importForm, setImportForm] = useState({ supplier_id: '', product_id: '', qty: '', unit_cost: '', paid_amount: '', payment_method: 'Cash ៛' });
+  const [importForm, setImportForm] = useState({ supplier_id: '', product_id: '', qty: '0', unit_cost: '0', paid_amount: '0', payment_method: 'Cash ៛' });
   const [isSupplierDropdownOpen, setIsSupplierDropdownOpen] = useState(false);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
@@ -540,9 +540,15 @@ export default function POSPage() {
         const editId = urlParams.get('edit');
         if (editId) {
           setEditingInvoiceId(editId);
-          setActiveTab('wholesale'); 
           
-          const { data: saleRows } = await supabase.from('sales').select('*').eq('invoice_id', editId);
+          // 🔥 NEW: Detect if we are editing a Retail or Wholesale invoice!
+          const isRetailEdit = editId.startsWith('RET-');
+          setActiveTab(isRetailEdit ? 'retail' : 'wholesale'); 
+          
+          const targetTable = isRetailEdit ? 'retail_sales' : 'sales';
+          const targetColumn = isRetailEdit ? 'transaction_id' : 'invoice_id';
+
+          const { data: saleRows } = await supabase.from(targetTable).select('*').eq(targetColumn, editId);
           if (saleRows && saleRows.length > 0) {
             const rebuiltCart = saleRows.map((row: any, index: number) => { // 🔥 ADDED INDEX
               const isSpecialRow = (row.custom_rice_type || row.rice_type).includes('ដូរ') || (row.custom_rice_type || row.rice_type).includes('បានប្រើ') || (row.custom_rice_type || row.rice_type).includes('បញ្ចុះតម្លៃ') || (row.custom_rice_type || row.rice_type).includes('កក់') || (row.custom_rice_type || row.rice_type).includes('ថ្លៃបាវ') || (row.custom_rice_type || row.rice_type).includes('បាវ');
@@ -949,7 +955,7 @@ export default function POSPage() {
       const { error: rpcError } = await supabase.rpc('process_stock_import', { p_payload: payload });
       if (rpcError) throw rpcError;
 
-      setImportForm({ supplier_id: '', product_id: '', qty: '', unit_cost: '', paid_amount: '', payment_method: 'Cash ៛' });
+      setImportForm({ supplier_id: '', product_id: '', qty: '0', unit_cost: '0', paid_amount: '0', payment_method: 'Cash ៛' });
       showToast('success', 'Stock Received', `${qty} bags added to inventory.`);
       setActiveFullScreen('none');
       loadProductsAndSettings();
@@ -4444,11 +4450,26 @@ export default function POSPage() {
                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                   <div style={{ flex: 1, minWidth: '150px' }}>
                     <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', marginBottom: '6px' }}>Quantity Imported</label>
-                    <input type="number" className="saas-input" value={importForm.qty} onChange={e => setImportForm({...importForm, qty: e.target.value})} />
+                    <input 
+                      type="number" 
+                      placeholder="0" 
+                      className="saas-input no-spinners" 
+                      value={importForm.qty} 
+                      onFocus={() => { if (importForm.qty === '0') setImportForm({...importForm, qty: ''}) }}
+                      onBlur={() => { if (importForm.qty === '') setImportForm({...importForm, qty: '0'}) }}
+                      onChange={e => setImportForm({...importForm, qty: e.target.value})} 
+                    />
                   </div>
                   <div style={{ flex: 1, minWidth: '150px' }}>
                     <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', marginBottom: '6px' }}>Unit Cost (៛)</label>
-                    <CurrencyInput value={importForm.unit_cost} onChange={(v:any) => setImportForm({...importForm, unit_cost: v})} className="saas-input" />
+                    <CurrencyInput 
+                      placeholder="0" 
+                      value={importForm.unit_cost} 
+                      onFocus={() => { if (String(importForm.unit_cost) === '0') setImportForm({...importForm, unit_cost: ''}) }}
+                      onBlur={() => { if (importForm.unit_cost === '') setImportForm({...importForm, unit_cost: '0'}) }}
+                      onChange={(v:any) => setImportForm({...importForm, unit_cost: v})} 
+                      className="saas-input" 
+                    />
                   </div>
                 </div>
 
@@ -4462,7 +4483,14 @@ export default function POSPage() {
                   <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                     <div style={{ flex: 2, minWidth: '150px' }}>
                       <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', marginBottom: '6px' }}>Amount Paying Now (៛)</label>
-                      <CurrencyInput value={importForm.paid_amount} onChange={(v:any) => setImportForm({...importForm, paid_amount: v})} className="saas-input" />
+                      <CurrencyInput 
+                        placeholder="0" 
+                        value={importForm.paid_amount} 
+                        onFocus={() => { if (String(importForm.paid_amount) === '0') setImportForm({...importForm, paid_amount: ''}) }}
+                        onBlur={() => { if (importForm.paid_amount === '') setImportForm({...importForm, paid_amount: '0'}) }}
+                        onChange={(v:any) => setImportForm({...importForm, paid_amount: v})} 
+                        className="saas-input" 
+                      />
                     </div>
                     <div style={{ flex: 1, minWidth: '120px' }}>
                       <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', marginBottom: '6px' }}>Payment Method</label>

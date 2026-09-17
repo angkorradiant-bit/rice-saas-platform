@@ -159,8 +159,13 @@ export default function RiceControl() {
   const [expandedProductId, setExpandedProductId] = useState<number | null>(null)
 
   // --- IMPORT FORM STATE ---
-  const [importForm, setImportForm] = useState({ supplier_id: '', product_id: '', qty: '', unit_cost: '', paid_amount: '', payment_method: 'Cash ៛' })
+  // 🔥 FIX: Set defaults to '0' so they aren't totally blank, preventing the "Missing Data" error!
+  const [importForm, setImportForm] = useState({ supplier_id: '', product_id: '', qty: '0', unit_cost: '0', paid_amount: '0', payment_method: 'Cash ៛' })
   
+  // 🔥 NEW: EDIT IMPORT STATE
+  const [editImportModal, setEditImportModal] = useState<{isOpen: boolean, record: any}>({ isOpen: false, record: null });
+  const [editImportForm, setEditImportForm] = useState({ qty: '', unit_cost: '' });
+
   // --- MODALS ---
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false)
   const [newSupplier, setNewSupplier] = useState({ name: '', phone: '', location: '' })
@@ -374,7 +379,7 @@ export default function RiceControl() {
     setIsProductDropdownOpen(false);
     setSupplierSearch('');
     setProductSearch('');
-    setImportForm({ supplier_id: '', product_id: '', qty: '', unit_cost: '', paid_amount: '', payment_method: 'Cash ៛' });
+    setImportForm({ supplier_id: '', product_id: '', qty: '0', unit_cost: '0', paid_amount: '0', payment_method: 'Cash ៛' });
     setIsAddSupplierOpen(false);
     setNewSupplier({ name: '', phone: '', location: '' });
     setPayPendingModal({isOpen: false, record: null, totalDue: 0});
@@ -911,7 +916,7 @@ export default function RiceControl() {
       const { error: rpcError } = await supabase.rpc('process_stock_import', { p_payload: payload });
       if (rpcError) throw rpcError;
 
-      setImportForm({ supplier_id: '', product_id: '', qty: '', unit_cost: '', paid_amount: '', payment_method: 'Cash ៛' });
+      setImportForm({ supplier_id: '', product_id: '', qty: '0', unit_cost: '0', paid_amount: '0', payment_method: 'Cash ៛' });
       showToast('success', 'Stock Received', `${qty} bags added to inventory. Batch logged.`);
       
       if (isPayLater) setActiveView('pending');
@@ -1002,6 +1007,93 @@ export default function RiceControl() {
       setIsProcessing(false);
     }
   }
+
+  // 🔥 NEW: CORE ENGINE FOR EDITING PENDING IMPORTS
+  const handleEditImportSubmit = async () => {
+    if (!editImportModal.record) return;
+    setIsProcessing(true);
+    try {
+      const impData = editImportModal.record;
+      const oldQty = Number(impData.qty);
+      const oldUnitCost = Number(impData.unit_cost);
+      const oldTotalCost = Number(impData.total_cost);
+      
+      const newQty = Number(String(editImportForm.qty).replace(/,/g, ''));
+      const newUnitCost = Number(String(editImportForm.unit_cost).replace(/,/g, ''));
+      const newTotalCost = newQty * newUnitCost;
+      
+      const qtyDiff = newQty - oldQty;
+      const costDiff = newTotalCost - oldTotalCost;
+
+      // 1. UPDATE IMPORT TABLE
+      const { error: impError } = await supabase.from('imports')
+        .update({ 
+           qty: newQty, 
+           unit_cost: newUnitCost, 
+           total_cost: newTotalCost,
+           status: Number(impData.paid_amount) >= newTotalCost ? 'Paid' : 'Pending'
+        })
+        .eq('id', impData.id).eq('branch_id', activeBranchId);
+      if (impError) throw impError;
+
+      // 2. FIND AND UPDATE THE INVENTORY BATCH
+      const { data: batches } = await supabase.from('inventory_batches')
+        .select('*')
+        .eq('product_id', impData.product_id)
+        .eq('cost_price', oldUnitCost)
+        .eq('branch_id', activeBranchId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (batches && batches.length > 0) {
+        const newRemaining = Math.max(0, Number(batches[0].remaining_qty) + qtyDiff);
+        await supabase.from('inventory_batches')
+          .update({ remaining_qty: newRemaining, cost_price: newUnitCost })
+          .eq('id', batches[0].id).eq('branch_id', activeBranchId);
+      }
+
+      // 3. ADJUST PRODUCT MASTER STOCK
+      const targetProduct = products.find(p => p.id === impData.product_id);
+      if (targetProduct && qtyDiff !== 0) {
+        await supabase.rpc('adjust_product_stock', { 
+          p_product_id: targetProduct.id, 
+          p_quantity: qtyDiff,
+          p_branch_id: activeBranchId 
+        });
+      }
+
+      // 4. ADJUST SUPPLIER DEBT & ACCOUNTS PAYABLE
+      if (costDiff !== 0 && impData.supplier_id) {
+        const { data: supData } = await supabase.from('suppliers')
+          .select('total_owed_riel').eq('id', impData.supplier_id).single();
+          
+        if (supData) {
+          await supabase.from('suppliers')
+            .update({ total_owed_riel: Math.max(0, Number(supData.total_owed_riel) + costDiff) })
+            .eq('id', impData.supplier_id).eq('branch_id', activeBranchId);
+        }
+        
+        // Sync Accounts Payable if Unpaid
+        await supabase.from('accounts_payable')
+          .update({ amount_riel: newTotalCost, notes: `Stock Import: ${newQty} bags` })
+          .eq('supplier_name', impData.suppliers?.name || '')
+          .eq('notes', `Stock Import: ${oldQty} bags`)
+          .eq('status', 'Unpaid')
+          .eq('branch_id', activeBranchId);
+      }
+
+      showToast('success', 'Import Updated', 'Stock, batch, and financials synced successfully.');
+      setEditImportModal({ isOpen: false, record: null });
+      fetchProducts();
+      fetchBatches();
+      fetchImports();
+      fetchSuppliers();
+    } catch (err: any) {
+      showToast('error', 'Update Failed', err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleSaveRecord = async (id: number) => {
     if (!edits[id]) return;
@@ -2024,11 +2116,26 @@ export default function RiceControl() {
               <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                 <div style={{ flex: 1, minWidth: '150px' }}>
                   <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', marginBottom: '6px' }}>Quantity Imported</label>
-                  <input type="number" placeholder="0" className="saas-input no-spinners" value={importForm.qty} onChange={e => setImportForm({...importForm, qty: e.target.value})} />
+                  <input 
+                    type="number" 
+                    placeholder="0" 
+                    className="saas-input no-spinners" 
+                    value={importForm.qty} 
+                    onFocus={() => { if (importForm.qty === '0') setImportForm({...importForm, qty: ''}) }}
+                    onBlur={() => { if (importForm.qty === '') setImportForm({...importForm, qty: '0'}) }}
+                    onChange={e => setImportForm({...importForm, qty: e.target.value})} 
+                  />
                 </div>
                 <div style={{ flex: 1, minWidth: '150px' }}>
                   <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', marginBottom: '6px' }}>Unit Cost (៛)</label>
-                  <CurrencyInput placeholder="0" value={importForm.unit_cost} onChange={(v:any) => setImportForm({...importForm, unit_cost: v})} className="saas-input" />
+                  <CurrencyInput 
+                    placeholder="0" 
+                    value={importForm.unit_cost} 
+                    onFocus={() => { if (String(importForm.unit_cost) === '0') setImportForm({...importForm, unit_cost: ''}) }}
+                    onBlur={() => { if (importForm.unit_cost === '') setImportForm({...importForm, unit_cost: '0'}) }}
+                    onChange={(v:any) => setImportForm({...importForm, unit_cost: v})} 
+                    className="saas-input" 
+                  />
                 </div>
               </div>
 
@@ -2042,7 +2149,14 @@ export default function RiceControl() {
                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                   <div style={{ flex: 2, minWidth: '150px' }}>
                     <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', marginBottom: '6px' }}>Amount Paying Now (៛)</label>
-                    <CurrencyInput placeholder="0" value={importForm.paid_amount} onChange={(v:any) => setImportForm({...importForm, paid_amount: v})} className="saas-input" />
+                    <CurrencyInput 
+                      placeholder="0" 
+                      value={importForm.paid_amount} 
+                      onFocus={() => { if (String(importForm.paid_amount) === '0') setImportForm({...importForm, paid_amount: ''}) }}
+                      onBlur={() => { if (importForm.paid_amount === '') setImportForm({...importForm, paid_amount: '0'}) }}
+                      onChange={(v:any) => setImportForm({...importForm, paid_amount: v})} 
+                      className="saas-input" 
+                    />
                   </div>
                   <div style={{ flex: 1, minWidth: '120px' }}>
                     <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', marginBottom: '6px' }}>Payment Method</label>
@@ -2181,6 +2295,17 @@ export default function RiceControl() {
                                   style={{ padding: '6px 12px', fontSize: '12px' }}
                                 >
                                   💸 Pay Now
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    setEditImportModal({ isOpen: true, record: imp });
+                                    setEditImportForm({ qty: imp.qty, unit_cost: imp.unit_cost });
+                                  }}
+                                  disabled={isProcessing}
+                                  className="saas-btn saas-btn-secondary"
+                                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                                >
+                                  ✏️ Edit
                                 </button>
                                 <button 
                                   onClick={() => handleVoidImport(imp.id)}
@@ -2601,8 +2726,9 @@ export default function RiceControl() {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '16px' }}>
                  <button className="saas-btn saas-btn-danger" onClick={() => { handleVoidImport(mobilePendingAction.imp.id); setMobilePendingAction(null); }}>❌ Void Record</button>
-                 <button className="saas-btn saas-btn-primary" onClick={() => { setPayPendingModal({ isOpen: true, record: mobilePendingAction.imp, totalDue: mobilePendingAction.remaining }); setPendingPaymentRows([{ id: Date.now(), method: 'Cash ៛', amount: '' }]); setMobilePendingAction(null); }}>💸 Pay Now</button>
+                 <button className="saas-btn saas-btn-secondary" onClick={() => { setEditImportModal({ isOpen: true, record: mobilePendingAction.imp }); setEditImportForm({ qty: mobilePendingAction.imp.qty, unit_cost: mobilePendingAction.imp.unit_cost }); setMobilePendingAction(null); }}>✏️ Edit Import</button>
               </div>
+              <button className="saas-btn saas-btn-primary" style={{ width: '100%', marginTop: '12px' }} onClick={() => { setPayPendingModal({ isOpen: true, record: mobilePendingAction.imp, totalDue: mobilePendingAction.remaining }); setPendingPaymentRows([{ id: Date.now(), method: 'Cash ៛', amount: '' }]); setMobilePendingAction(null); }}>💸 Pay Now</button>
            </div>
         )}
       </Modal>
@@ -2991,6 +3117,38 @@ export default function RiceControl() {
         <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
           <button onClick={() => setIsAddModalOpen(false)} className="saas-btn saas-btn-secondary">Cancel</button>
           <button onClick={addProduct} className="saas-btn saas-btn-primary">Save Product</button>
+        </div>
+      </Modal>
+
+      {/* ✏️ EDIT PENDING IMPORT MODAL */}
+      <Modal isOpen={editImportModal.isOpen} onClose={() => setEditImportModal({ isOpen: false, record: null })} title="✏️ Edit Pending Import" maxWidth="400px">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', color: '#475569' }}>
+             This action will safely recalculate your Master Stock, Inventory Batch, and Supplier Debt.
+          </div>
+          <div>
+            <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', marginBottom: '8px' }}>Quantity Imported</label>
+            <CurrencyInput
+              autoFocus
+              value={editImportForm.qty}
+              onChange={(v: any) => setEditImportForm({ ...editImportForm, qty: v })}
+              className="saas-input"
+            />
+          </div>
+          <div>
+            <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', marginBottom: '8px' }}>Unit Cost (៛)</label>
+            <CurrencyInput
+              value={editImportForm.unit_cost}
+              onChange={(v: any) => setEditImportForm({ ...editImportForm, unit_cost: v })}
+              className="saas-input"
+            />
+          </div>
+          <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+            <button onClick={() => setEditImportModal({ isOpen: false, record: null })} className="saas-btn saas-btn-secondary">Cancel</button>
+            <button onClick={handleEditImportSubmit} disabled={isProcessing} className="saas-btn saas-btn-primary">
+              {isProcessing ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
         </div>
       </Modal>
 

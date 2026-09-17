@@ -11,6 +11,7 @@ import TableSkeleton from '@/components/TableSkeleton'
 import EmptyState from '@/components/EmptyState'
 import { useBranch } from '@/components/BranchContext' // 🔥 GLOBAL MEMORY IMPORTED
 import AdminGuard from '@/components/AdminGuard' // 🔒 NEW: IMPORT THE BOUNCER
+import { exportToExcel } from '@/utils/exportHelpers';
 
 // Formats headers beautifully
 const formatHeader = (key: string) => {
@@ -536,6 +537,16 @@ export default function BizDatabase() {
           <h1 className="saas-page-title">🔐 Business Database</h1>
         </div>
         <div className="header-actions" style={{ display: 'flex', gap: '12px' }}>
+          <button 
+            onClick={() => exportToExcel(processedTransactions, `Sales-Export-Branch-${activeBranchId}-${timeFilter}.csv`)} 
+            className="saas-btn"
+            style={{ background: '#10b981', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}
+            title="Export current view to Excel CSV"
+          >
+            <span>📊</span>
+            <span>Export Excel</span>
+          </button>
+
           {selectedToDelete.size > 0 && (
             <button onClick={handleDelete} className="saas-btn saas-btn-danger">
               🗑️ Delete ({selectedToDelete.size})
