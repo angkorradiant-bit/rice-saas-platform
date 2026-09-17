@@ -1754,7 +1754,8 @@ export default function POSPage() {
         return `${s.method}: ${s.face_amount}`;
       }).join(', ');
 
-      const combinedRiceTypes = currentCart.map(item => `${item.custom_name} (x${item.quantity})`).join(', ');
+      // 🔥 FIX: Wraps quantity in Math.abs() so discounts and returns always look pretty like (x1) instead of (x-1)
+      const combinedRiceTypes = currentCart.map(item => `${item.custom_name} (x${Math.abs(Number(item.quantity))})`).join(', ');
       const baseSaleRows: any[] = [];
       const stockUpdates: Record<number, number> = {}; 
       const fifoUpdates: Record<number, number> = {}; 

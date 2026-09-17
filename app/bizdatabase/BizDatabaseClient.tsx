@@ -11,7 +11,8 @@ import TableSkeleton from '@/components/TableSkeleton'
 import EmptyState from '@/components/EmptyState'
 import { useBranch } from '@/components/BranchContext' // 🔥 GLOBAL MEMORY IMPORTED
 import AdminGuard from '@/components/AdminGuard' // 🔒 NEW: IMPORT THE BOUNCER
-import { exportToExcel } from '@/utils/exportHelpers';
+import { exportBizDataToExcel } from '@/utils/exportHelpers';
+
 
 // Formats headers beautifully
 const formatHeader = (key: string) => {
@@ -538,10 +539,11 @@ export default function BizDatabase() {
         </div>
         <div className="header-actions" style={{ display: 'flex', gap: '12px' }}>
           <button 
-            onClick={() => exportToExcel(processedTransactions, `Sales-Export-Branch-${activeBranchId}-${timeFilter}.csv`)} 
+            /* 🔥 FIX: Now uses the new function and passes 'transactions' so all tabs are built! */
+            onClick={() => exportBizDataToExcel(transactions, `Full-Biz-Report-Branch-${activeBranchId}-${timeFilter}.xlsx`)} 
             className="saas-btn"
             style={{ background: '#10b981', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px' }}
-            title="Export current view to Excel CSV"
+            title="Export full database to Multi-Tab Excel"
           >
             <span>📊</span>
             <span className="hide-on-mobile">Export Excel</span>
