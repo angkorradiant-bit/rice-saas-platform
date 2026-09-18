@@ -277,14 +277,26 @@ export default function RiceControl() {
     const message = `${alertType}\n🏬 Branch ID: *${activeBranchId}*\n📅 Date: ${dateStr}\n🌾 Product: *${productName}*\n📦 Current Stock: *${stockNum}*\n📉 Min Threshold: ${minNum}`;
 
     const botToken = TELEGRAM_CONFIG.botToken || process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN;
-    // Uses your requested newGroupChatId mapping
-    const chatId = (TELEGRAM_CONFIG as any).newGroupChatId || (TELEGRAM_CONFIG as any).stockChatId || TELEGRAM_CONFIG.chatId;
+    const masterChatId = TELEGRAM_CONFIG.chatId || process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID;
+    
+    // 🚦 ROUTE TO STOCK TOPICS (11 or 12)
+    const targetThreadId = (TELEGRAM_CONFIG as any).stockTopics?.[activeBranchId];
 
-    if (botToken && chatId) {
+    if (botToken && masterChatId) {
+      const payload: any = {
+        chat_id: masterChatId,
+        text: message,
+        parse_mode: 'Markdown'
+      };
+
+      if (targetThreadId) {
+        payload.message_thread_id = targetThreadId;
+      }
+
       fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'Markdown' })
+        body: JSON.stringify(payload)
       }).catch(console.error);
     }
   };
@@ -317,14 +329,27 @@ export default function RiceControl() {
       });
 
       const botToken = TELEGRAM_CONFIG.botToken || process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN;
-      const chatId = (TELEGRAM_CONFIG as any).newGroupChatId || (TELEGRAM_CONFIG as any).stockChatId || TELEGRAM_CONFIG.chatId;
+      const masterChatId = TELEGRAM_CONFIG.chatId || process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID;
 
-      if (!botToken || !chatId) throw new Error('Telegram chat ID or bot token missing');
+      // 🚦 ROUTE TO FINANCIAL REPORT TOPICS (2 or 3)
+      const targetThreadId = (TELEGRAM_CONFIG as any).reportTopics?.[activeBranchId];
+
+      if (!botToken || !masterChatId) throw new Error('Telegram chat ID or bot token missing');
+
+      const payload: any = {
+        chat_id: masterChatId,
+        text: msg,
+        parse_mode: 'Markdown'
+      };
+
+      if (targetThreadId) {
+        payload.message_thread_id = targetThreadId;
+      }
 
       const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: 'Markdown' })
+        body: JSON.stringify(payload)
       });
       
       if(!res.ok) throw new Error('Telegram API error');
