@@ -2139,7 +2139,9 @@ export default function RiceControl() {
                         }
                         
                         return true;
-                      }).map(p => (
+                      })
+                      .sort((a, b) => riceCategoryComparator(a, b, 'cost_price'))
+                      .map(p => (
                         <div key={p.id} className="dropdown-row" onMouseDown={(e) => { e.stopPropagation(); setImportForm({...importForm, product_id: String(p.id)}); setIsProductDropdownOpen(false); }}>
                           <span style={{ fontWeight: 'normal', color: '#334155' }}>{p.name}</span>
                           <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px' }}>({p.weight}kg)</span>
