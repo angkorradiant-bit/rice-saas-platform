@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom' // 👈 🔥 ADD THIS LINE!
 import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { formatRiel, formatUSD, formatNumber, EXCHANGE_RATE } from '@/utils/formatters'
+import { riceCategoryComparator } from '@/utils/riceSorter' // 👈 🔥 IMPORTED MASTER SORTER
 import { CurrencyInput } from '@/components/Inputs'
 import { Product, InventoryBatch, PaymentRow } from '@/types'
 import { useToast } from '@/components/ToastProvider'
@@ -277,14 +278,26 @@ export default function RiceControl() {
     const message = `${alertType}\n🏬 Branch ID: *${activeBranchId}*\n📅 Date: ${dateStr}\n🌾 Product: *${productName}*\n📦 Current Stock: *${stockNum}*\n📉 Min Threshold: ${minNum}`;
 
     const botToken = TELEGRAM_CONFIG.botToken || process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN;
-    // Uses your requested newGroupChatId mapping
-    const chatId = (TELEGRAM_CONFIG as any).newGroupChatId || (TELEGRAM_CONFIG as any).stockChatId || TELEGRAM_CONFIG.chatId;
+    const masterChatId = TELEGRAM_CONFIG.chatId || process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID;
+    
+    // 🚦 ROUTE TO STOCK TOPICS (11 or 12)
+    const targetThreadId = (TELEGRAM_CONFIG as any).stockTopics?.[activeBranchId];
 
-    if (botToken && chatId) {
+    if (botToken && masterChatId) {
+      const payload: any = {
+        chat_id: masterChatId,
+        text: message,
+        parse_mode: 'Markdown'
+      };
+
+      if (targetThreadId) {
+        payload.message_thread_id = targetThreadId;
+      }
+
       fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'Markdown' })
+        body: JSON.stringify(payload)
       }).catch(console.error);
     }
   };
@@ -317,14 +330,27 @@ export default function RiceControl() {
       });
 
       const botToken = TELEGRAM_CONFIG.botToken || process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN;
-      const chatId = (TELEGRAM_CONFIG as any).newGroupChatId || (TELEGRAM_CONFIG as any).stockChatId || TELEGRAM_CONFIG.chatId;
+      const masterChatId = TELEGRAM_CONFIG.chatId || process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID;
 
-      if (!botToken || !chatId) throw new Error('Telegram chat ID or bot token missing');
+      // 🚦 ROUTE TO FINANCIAL REPORT TOPICS (2 or 3)
+      const targetThreadId = (TELEGRAM_CONFIG as any).reportTopics?.[activeBranchId];
+
+      if (!botToken || !masterChatId) throw new Error('Telegram chat ID or bot token missing');
+
+      const payload: any = {
+        chat_id: masterChatId,
+        text: msg,
+        parse_mode: 'Markdown'
+      };
+
+      if (targetThreadId) {
+        payload.message_thread_id = targetThreadId;
+      }
 
       const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: 'Markdown' })
+        body: JSON.stringify(payload)
       });
       
       if(!res.ok) throw new Error('Telegram API error');
@@ -1473,7 +1499,7 @@ export default function RiceControl() {
          return (Number(b.mtd_kg_used) || 0) - (Number(a.mtd_kg_used) || 0);
       }
       
-      // 🔥 OVERRIDE: If the database is stubbornly sorting by 'id', force Highest Price instead!
+      // 2. User clicked a specific column header to sort
       if (sortConfig && sortConfig.key !== 'id') {
           const { key, direction } = sortConfig;
           if ((a as any)[key] < (b as any)[key]) return direction === 'asc' ? -1 : 1;
@@ -1481,8 +1507,23 @@ export default function RiceControl() {
           return 0;
       }
 
-      // 2. Default Auto-Sort: Highest Price to Lowest
-      return (Number(b.price) || 0) - (Number(a.price) || 0);
+      // 3. 🚦 DEFAULT AUTO-SORT: Call your central Master Sort Engine!
+      const priceKeyToCompare = activeView === 'retail' ? 'price' : 'cost_price';
+      
+      // Grab the dynamic wholesale COGS if applicable
+      const aCompare = { ...a };
+      const bCompare = { ...b };
+      if (activeView === 'wholesale') {
+        const aBatches = activeBatchesMap[a.id] || [];
+        aBatches.sort((x,y) => x.id - y.id);
+        aCompare.cost_price = Number(aBatches[0]?.cost_price || a.cost_price || 0);
+
+        const bBatches = activeBatchesMap[b.id] || [];
+        bBatches.sort((x,y) => x.id - y.id);
+        bCompare.cost_price = Number(bBatches[0]?.cost_price || b.cost_price || 0);
+      }
+      
+      return riceCategoryComparator(aCompare, bCompare, priceKeyToCompare);
     })
     // 🔥 FREEZE ROWS WHILE TYPING: We run .map LAST so live inputs don't trigger sorting!
     .map(p => ({ ...p, ...edits[p.id] }));

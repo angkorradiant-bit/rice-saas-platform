@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabaseClient'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { Product, InventoryBatch } from '@/types'
 import { formatRiel } from '@/utils/formatters'
+import { riceCategoryComparator } from '@/utils/riceSorter' // 👈 🔥 IMPORTED MASTER SORTER
 import { CurrencyInput } from '@/components/Inputs'
 import { useToast } from '@/components/ToastProvider'
 import EmptyState from '@/components/EmptyState'
@@ -221,7 +222,9 @@ if (dropdownTab === 'retail' && isWholesale) return false;
 return true;
 }
 return true;
-});
+})
+// 🚦 AUTOMATICALLY APPLY MASTER SORT TO DROPDOWNS
+.sort((a, b) => riceCategoryComparator(a, b, 'cost_price'));
 }, [products, dropdownSearch, activeDropdown, dropdownTab]);
 
 const handleSelectProduct = (p: Product, target: string) => {

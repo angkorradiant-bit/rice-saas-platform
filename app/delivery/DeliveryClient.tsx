@@ -315,8 +315,8 @@ export default function DeliveryPage() {
       setInlinePayments(prev => { const n = {...prev}; delete n[d.invoice_id]; return n; });
 
       try {
-        let message = `📦 *Delivery Payment Update*\n`;
-        message += `🏬 *Branch ID:* ${activeBranchId}\n`; // 👈 🔥 ADD THIS LINE
+        let message = `🚚 *Delivery Payment Update*\n`;
+        message += `🏬 *Branch ID:* ${activeBranchId === 1 ? 'SMC' : activeBranchId === 2 ? 'Chukmeas' : activeBranchId}\n`;
         message += `📅 *Date:* ${new Date().toLocaleDateString('en-GB')}\n`;
         message += `👤 *Customer name:* ${d.customer_name}\n`;
         message += `🚚 *Delivery Status:* Delivered\n`;
@@ -325,11 +325,30 @@ export default function DeliveryPage() {
           message += `⏳ *Unpaid amount:* ${formatRiel(newBalance)}\n`; 
         }
 
-        fetch(`https://api.telegram.org/bot${TELEGRAM_CONFIG.botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: TELEGRAM_CONFIG.chatId, text: message, parse_mode: 'Markdown' })
-        }).catch(console.error);
+        const botToken = TELEGRAM_CONFIG.botToken;
+        const masterChatId = TELEGRAM_CONFIG.chatId;
+        
+        // 🚦 ROUTE TO DELIVERY TOPICS (19 or 22)
+        const targetThreadId = (TELEGRAM_CONFIG as any).deliveryTopics?.[activeBranchId];
+
+        if (botToken && masterChatId) {
+          const payload: any = {
+            chat_id: masterChatId,
+            text: message,
+            parse_mode: 'Markdown'
+          };
+
+          // Inject the specific topic ID for the active branch!
+          if (targetThreadId) {
+            payload.message_thread_id = targetThreadId;
+          }
+
+          fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          }).catch(console.error);
+        }
       } catch (teleErr) { console.error("Telegram Error", teleErr); }
 
       showToast('success', 'Payment Saved', 'Delivery payment logged successfully.');
