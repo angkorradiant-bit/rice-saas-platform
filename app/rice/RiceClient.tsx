@@ -1860,8 +1860,10 @@ export default function RiceControl() {
 <div className="dropdown-results-tray">
   <div className="dropdown-row clear-option" onMouseDown={(e) => { e.stopPropagation(); handleLinkWholesaleBag(p.id, null); }}>❌ Clear Linked Bag</div>
   {/* 🔥 OVERSELL FIX: Allow 0 or negative stock wholesale bags to be linked */}
-  {products.filter(wp => wp.weight > 1 && wp.name.toLowerCase().includes(dropdownSearch.toLowerCase())).map(wp => (
-                                            <div key={wp.id} className="dropdown-row" onMouseDown={(e) => { e.stopPropagation(); handleLinkWholesaleBag(p.id, wp); }}>
+                              {products.filter(wp => wp.weight > 1 && wp.name.toLowerCase().includes(dropdownSearch.toLowerCase()))
+                                .sort((a, b) => riceCategoryComparator(a, b, 'cost_price'))
+                                .map(wp => (
+                                <div key={wp.id} className="dropdown-row" onMouseDown={(e) => { e.stopPropagation(); handleLinkWholesaleBag(p.id, wp); }}>
                                               <span style={{ fontWeight: 'normal', color: '#334155' }}>{wp.name}</span>
                                               <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px' }}>(Stock: {wp.stock} • {formatRiel(Number(wp.cost_price))})</span>
                                             </div>
@@ -2139,7 +2141,9 @@ export default function RiceControl() {
                         }
                         
                         return true;
-                      }).map(p => (
+                      })
+                      .sort((a, b) => riceCategoryComparator(a, b, 'cost_price'))
+                      .map(p => (
                         <div key={p.id} className="dropdown-row" onMouseDown={(e) => { e.stopPropagation(); setImportForm({...importForm, product_id: String(p.id)}); setIsProductDropdownOpen(false); }}>
                           <span style={{ fontWeight: 'normal', color: '#334155' }}>{p.name}</span>
                           <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px' }}>({p.weight}kg)</span>
@@ -2683,7 +2687,9 @@ export default function RiceControl() {
                                 <div style={{ textAlign: 'center', padding: '16px', color: '#94a3b8', fontSize: '14px' }}>No bags found</div>
                               ) : (
                                 <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-                                  {wpList.filter(wp => wp.name.toLowerCase().includes(mobileLinkSearch.toLowerCase())).map((wp, index, arr) => (
+                                  {wpList.filter(wp => wp.name.toLowerCase().includes(mobileLinkSearch.toLowerCase()))
+                                    .sort((a, b) => riceCategoryComparator(a, b, 'cost_price'))
+                                    .map((wp, index, arr) => (
                                     <div 
                                       key={wp.id} 
                                       onClick={(e) => { e.preventDefault(); handleLinkWholesaleBag(p.id, wp); setMobileEditProduct({...p, linked_wholesale_id: wp.id}); setIsMobileLinkDropdownOpen(false); }} 
