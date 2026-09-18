@@ -1094,13 +1094,12 @@ export default function POSPage() {
     if (mixDropdownSearch && !p.name.toLowerCase().includes(mixDropdownSearch.toLowerCase())) return false;
     if (activeDropdown === 'bag') return p.name.includes('បាវ');
     if (activeDropdown === 'rice1' || activeDropdown === 'rice2' || activeDropdown === 'rice3') { 
-      // 🔥 HSR FIX: Removed the "stock <= 0" block. Allow staff to mix rice even if base stock is negative/0!
       if (p.weight < 50) return false; 
       return true; 
     }
     if (activeDropdown === 'target') { const isWholesale = Number(p.weight) >= 50; if (dropdownTab === 'wholesale' && !isWholesale) return false; if (dropdownTab === 'retail' && isWholesale) return false; return true; }
     return true;
-  });
+  }).sort((a, b) => riceCategoryComparator(a, b, 'cost_price')); // 🚦 MASTER SORT APPLIED
 
   const handleSelectMixProduct = (p: Product, target: string) => {
     if (target === 'rice1') { setRice1Id(p.id.toString()); setRice1BatchId(null); }
@@ -3376,11 +3375,13 @@ export default function POSPage() {
               const currentSelectedName = products.find(prod => prod.id === currentSelectedId)?.name || '-- Click to Select a Bag --';
               const searchTerm = repackSearch[p.id] || '';
               
-              const availableBags = products.filter(prod => 
-                Number(prod.weight) >= 50 && 
-                // 🔥 OVERSELL FIX: Allow bags with 0 or negative stock to be selected as substitutes!
-                (!searchTerm || prod.name.toLowerCase().includes(searchTerm.toLowerCase()))
-              );
+              const availableBags = products
+                .filter(prod => 
+                  Number(prod.weight) >= 50 && 
+                  // 🔥 OVERSELL FIX: Allow bags with 0 or negative stock to be selected as substitutes!
+                  (!searchTerm || prod.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                )
+                .sort((a, b) => riceCategoryComparator(a, b, 'cost_price')); // 🚦 MASTER SORT APPLIED
 
               return (
                 <li key={p.id} style={{ marginBottom: '16px', listStyle: 'none', background: isOutOfStock ? '#fef2f2' : '#ffffff', padding: '12px', borderRadius: '8px', border: `1px solid ${isOutOfStock ? '#fca5a5' : '#cbd5e1'}` }}>
@@ -4107,7 +4108,10 @@ export default function POSPage() {
                           <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#1e293b' }}>-- No Bag Change --</div>
                         </div>
 
-                        {products.filter(p => p.name?.includes('បាវ')).map((bag: any) => {
+                        {products
+                          .filter(p => p.name?.includes('បាវ'))
+                          .sort((a, b) => riceCategoryComparator(a, b, 'cost_price')) // 🚦 MASTER SORT APPLIED
+                          .map((bag: any) => {
                           const isSelected = mobileBagId === bag.id;
                           return (
                             <div 
@@ -4497,8 +4501,11 @@ export default function POSPage() {
                     <div style={{ position: 'relative' }}>
                       <input autoFocus className="saas-input" placeholder="Search..." value={productSearch} onChange={e => setProductSearch(e.target.value)} onBlur={() => setTimeout(() => setIsProductDropdownOpen(false), 200)} />
                       <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', boxShadow: '0 10px 15px rgba(0,0,0,0.1)', maxHeight: '220px', overflowY: 'auto', zIndex: 10 }}>
-                        {products.filter(p => p.weight >= 50 && p.name.toLowerCase().includes(productSearch.toLowerCase())).map(p => (
-                          <div key={p.id} onMouseDown={(e) => { e.stopPropagation(); setImportForm({...importForm, product_id: String(p.id)}); setIsProductDropdownOpen(false); }} style={{ padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }} onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f8fafc'} onMouseLeave={e => e.currentTarget.style.backgroundColor = '#ffffff'}>
+                        {products
+                        .filter(p => p.weight >= 50 && p.name.toLowerCase().includes(productSearch.toLowerCase()))
+                        .sort((a, b) => riceCategoryComparator(a, b, 'cost_price')) // 🚦 MASTER SORT APPLIED
+                        .map(p => (
+                        <div key={p.id} onMouseDown={(e) => { e.stopPropagation(); setImportForm({...importForm, product_id: String(p.id)}); setIsProductDropdownOpen(false); }} style={{ padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }} onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f8fafc'} onMouseLeave={e => e.currentTarget.style.backgroundColor = '#ffffff'}>
                             <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1e293b', marginBottom: '4px' }}>{p.name} <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 'normal' }}>({p.weight}kg)</span></div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#64748b' }}>
                               <span>Cost: <b style={{ color: '#b58a3d' }}>{formatRiel(p.cost_price)}</b></span>
