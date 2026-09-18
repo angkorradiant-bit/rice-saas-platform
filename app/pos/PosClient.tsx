@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabaseClient'
 import * as htmlToImage from 'html-to-image'
 import { useFocusRefresh } from '@/lib/useFocusRefresh'
 import { formatRiel, formatUSD, EXCHANGE_RATE } from '@/utils/formatters'
+import { riceCategoryComparator } from '@/utils/riceSorter' // 👈 🔥 IMPORTED MASTER SORTER
 import { CurrencyInput } from '@/components/Inputs'
 import { Product, InventoryBatch, Customer } from '@/types'
 import { useToast } from '@/components/ToastProvider'
@@ -2185,25 +2186,32 @@ export default function POSPage() {
     });
 
     // 3. Final Sort
-    if (activeTab === 'wholesale') {
-      filtered.sort((a, b) => {
-        const cogsA = Number(activeBatches[a.id]?.[0]?.cost_price || a.cost_price || 0);
-        const cogsB = Number(activeBatches[b.id]?.[0]?.cost_price || b.cost_price || 0);
-        return cogsB - cogsA;
-      });
-
-      if (activeCategory === '🔥 Hot') {
-        filtered.sort((a, b) => (mtdSalesStats[b.id] || 0) - (mtdSalesStats[a.id] || 0));
+    filtered.sort((a, b) => {
+      // 🚨 OVERRIDE 1: "Hot" category sorts purely by sales volume
+      if (activeTab === 'wholesale' && activeCategory === '🔥 Hot') {
+        return (mtdSalesStats[b.id] || 0) - (mtdSalesStats[a.id] || 0);
       }
-    }
 
-    if (activeTab === 'retail' && retailPriceSort !== 'none') {
-      filtered.sort((a, b) => {
+      // 🚨 OVERRIDE 2: Retail manual price sort button
+      if (activeTab === 'retail' && retailPriceSort !== 'none') {
         const priceA = Number(a.price || 0);
         const priceB = Number(b.price || 0);
         return retailPriceSort === 'asc' ? priceA - priceB : priceB - priceA;
-      });
-    }
+      }
+
+      // 🚦 DEFAULT: Master Category Sort (Groups by family, then price high-to-low)
+      const priceKeyToCompare = activeTab === 'retail' ? 'price' : 'cost_price';
+      
+      // Grab the dynamic wholesale COGS if applicable
+      const aCompare = { ...a };
+      const bCompare = { ...b };
+      if (activeTab === 'wholesale') {
+        aCompare.cost_price = Number(activeBatches[a.id]?.[0]?.cost_price || a.cost_price || 0);
+        bCompare.cost_price = Number(activeBatches[b.id]?.[0]?.cost_price || b.cost_price || 0);
+      }
+      
+      return riceCategoryComparator(aCompare, bCompare, priceKeyToCompare);
+    });
 
     return filtered;
   }, [products, productOrder, searchQuery, activeTab, activeCategory, hiddenRetailIds, retailSubTab, mtdSalesStats, retailPriceSort, activeBatches]);
@@ -3690,6 +3698,7 @@ export default function POSPage() {
                     {/* Filtered Bag Products from Database with Price & COGS */}
                     {products
                       .filter(p => p.name?.includes('បាវ') && p.name !== 'ថ្លៃបាវ ប្រ៊េន')
+                      .sort((a, b) => riceCategoryComparator(a, b, 'cost_price')) // 🚦 MASTER SORT APPLIED
                       .map(p => (
                         <div
                           key={p.id}
@@ -4931,7 +4940,9 @@ export default function POSPage() {
               {/* 🔥 UPGRADED: Link Wholesale Bag Search Portal (Only visible on Retail Tab) */}
               {activeTab === 'retail' && activeFullScreen === 'none' && (() => {
                 const linkedProd = newItem.linked_wholesale_id ? products.find(p => String(p.id) === String(newItem.linked_wholesale_id)) : null;
-                const availableBags = products.filter(p => Number(p.weight) > 1 && (!linkBagSearch || p.name.toLowerCase().includes(linkBagSearch.toLowerCase())));
+                const availableBags = products
+                  .filter(p => Number(p.weight) > 1 && (!linkBagSearch || p.name.toLowerCase().includes(linkBagSearch.toLowerCase())))
+                  .sort((a, b) => riceCategoryComparator(a, b, 'cost_price')); // 🚦 MASTER SORT APPLIED
 
                 return (
                   <div style={{ marginBottom: '8px', position: 'relative' }}>
