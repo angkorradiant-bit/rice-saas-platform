@@ -648,8 +648,8 @@ export default function RiceControl() {
     const originalBatch = historyModal.activeBatches.find(b => b.id === batchId);
     if (!originalBatch) return setEditingHistoryId(null);
     
-    const targetProduct = products.find(p => p.id === originalBatch.product_id);
-    if (!targetProduct) return setEditingHistoryId(null);
+    const targetProduct = products.find(p => String(p.id) === String(originalBatch.product_id));
+      if (!targetProduct) return setEditingHistoryId(null);
 
     const originalQty = Number(originalBatch.remaining_qty) || 0;
     const newQty = edits.remaining_qty !== undefined ? Number(edits.remaining_qty) : originalQty;
@@ -664,14 +664,13 @@ export default function RiceControl() {
     
     if (!error) {
       // 2. Adjust master product stock if quantity changed
-      if (qtyDifference !== 0) {
-        await supabase.rpc('adjust_product_stock', { 
-          p_product_id: targetProduct.id, 
-          p_quantity: qtyDifference,
-          p_branch_id: activeBranchId
-        });
-        
-        const newStock = Number(targetProduct.stock) + qtyDifference;
+    if (qtyDifference !== 0) {
+      const newStock = Number(targetProduct.stock) + qtyDifference;
+      const { error: stockErr } = await supabase.from('products')
+        .update({ stock: newStock })
+        .eq('id', targetProduct.id)
+        .eq('branch_id', activeBranchId);
+      if (stockErr) throw stockErr;
         triggerStockAlert(targetProduct.name || 'Unknown', newStock, Number(targetProduct.min_stock_level) || 0);
         
         if (historyModal.product) {
@@ -723,7 +722,8 @@ export default function RiceControl() {
     const originalBatch = historyModal.activeBatches.find(b => b.id === batchId);
     if (!originalBatch) return;
     
-    const targetProduct = products.find(p => p.id === originalBatch.product_id);
+    // 1. Fixed string mismatch here
+    const targetProduct = products.find(p => String(p.id) === String(originalBatch.product_id));
     if (!targetProduct) return;
 
     if (!confirm("Are you sure you want to delete this active batch? The remaining quantity will be deducted from your master stock.")) return;
@@ -735,14 +735,16 @@ export default function RiceControl() {
     
     if (!error) {
       if (qtyToReverse > 0) {
-        // 🔒 SECURITY FIX: Enforce branch isolation on RPC stock adjustment
-        await supabase.rpc('adjust_product_stock', { 
-          p_product_id: targetProduct.id, 
-          p_quantity: -Math.abs(qtyToReverse),
-          p_branch_id: activeBranchId
-        });
+        // 2. Merged into a single newStock declaration
+        const newStock = Number(targetProduct.stock) - Math.abs(qtyToReverse);
         
-        const newStock = Number(targetProduct.stock) - qtyToReverse;
+        const { error: stockErr } = await supabase.from('products')
+          .update({ stock: newStock })
+          .eq('id', targetProduct.id)
+          .eq('branch_id', activeBranchId);
+        
+        if (stockErr) throw stockErr;
+        
         triggerStockAlert(targetProduct.name || 'Unknown', newStock, Number(targetProduct.min_stock_level) || 0);
         
         if (historyModal.product) {
@@ -791,14 +793,14 @@ export default function RiceControl() {
       const { data: impData } = await supabase.from('imports').select('*').eq('id', importId).single();
       if (!impData) throw new Error("Import not found");
 
-      const targetProduct = products.find(p => p.id === impData.product_id);
+      const targetProduct = products.find(p => String(p.id) === String(impData.product_id));
       if (targetProduct) {
-        // 🔒 SECURITY FIX: Enforce branch isolation on RPC stock adjustment
-        await supabase.rpc('adjust_product_stock', { 
-          p_product_id: targetProduct.id, 
-          p_quantity: -Math.abs(Number(impData.qty)),
-          p_branch_id: activeBranchId 
-        });
+        const newStock = Number(targetProduct.stock) - Math.abs(Number(impData.qty));
+        const { error: stockErr } = await supabase.from('products')
+          .update({ stock: newStock })
+          .eq('id', targetProduct.id)
+          .eq('branch_id', activeBranchId);
+        if (stockErr) throw stockErr;
       }
 
       const { data: batches } = await supabase.from('inventory_batches')
@@ -1079,13 +1081,14 @@ export default function RiceControl() {
       }
 
       // 3. ADJUST PRODUCT MASTER STOCK
-      const targetProduct = products.find(p => p.id === impData.product_id);
+      const targetProduct = products.find(p => String(p.id) === String(impData.product_id));
       if (targetProduct && qtyDiff !== 0) {
-        await supabase.rpc('adjust_product_stock', { 
-          p_product_id: targetProduct.id, 
-          p_quantity: qtyDiff,
-          p_branch_id: activeBranchId 
-        });
+        const newStock = Number(targetProduct.stock) + qtyDiff;
+        const { error: stockErr } = await supabase.from('products')
+          .update({ stock: newStock })
+          .eq('id', targetProduct.id)
+          .eq('branch_id', activeBranchId);
+        if (stockErr) throw stockErr;
       }
 
       // 4. ADJUST SUPPLIER DEBT & ACCOUNTS PAYABLE
