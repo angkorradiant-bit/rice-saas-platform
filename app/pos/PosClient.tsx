@@ -2744,11 +2744,24 @@ export default function POSPage() {
 
           <div>
             {filteredProducts.length === 0 ? (
-              <EmptyState 
-                icon="📦" 
-                title={currentT.noProducts} 
-                message="Try adjusting your search or filters." 
-              />
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', gap: '16px', paddingBottom: '20px' }}>
+                <EmptyState 
+                  icon="📦" 
+                  title={currentT.noProducts} 
+                  message="Try adjusting your search or filters." 
+                />
+                {/* 🔥 FIX: Emergency escape button to unhide products when the grid is completely empty! */}
+                <div 
+                  onClick={() => setIsVisibilitySettingsOpen(true)}
+                  className="saas-card"
+                  style={{ padding: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px dashed #cbd5e1', background: '#f8fafc', transition: 'transform 0.1s', boxShadow: 'none', width: '100%', maxWidth: '300px' }}
+                  onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.97)'; }} 
+                  onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+                >
+                  <span style={{ fontSize: '20px', marginRight: '8px' }}>⚙️</span>
+                  <span style={{ fontSize: '14px', color: '#64748b', fontWeight: 'bold' }}>Unhide / Show Rice</span>
+                </div>
+              </div>
             ) : isDeviceMobile ? (
               /* 📱 MOBILE: COMPACT HORIZONTAL NUMBERED LIST (Saves Massive Space) */
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
