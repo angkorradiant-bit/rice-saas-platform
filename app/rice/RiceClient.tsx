@@ -2587,6 +2587,19 @@ export default function RiceControl() {
 
                 {/* Edit Inputs */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {/* 🔥 ADDED: Product Name Editor for Mobile */}
+                  <div>
+                    <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', margin: '0 0 6px 0' }}>Product Name</label>
+                    <input 
+                      type="text"
+                      className="saas-input" 
+                      value={edits[p.id]?.name ?? p.name} 
+                      onChange={(e) => {
+                        setEdits(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), name: e.target.value } }));
+                      }} 
+                    />
+                  </div>
+                  
                   <div>
                     <label className="saas-card-title" style={{ display: 'block', fontSize: '11px', margin: '0 0 6px 0' }}>Selling Price (៛)</label>
                     <input 
