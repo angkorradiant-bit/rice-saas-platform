@@ -15,8 +15,13 @@ export const MASTER_RICE_ORDER = [
 
 // Helper to find the priority rank of a rice name
 export const getCategoryPriority = (productName: string) => {
-  const lowerName = (productName || '').toLowerCase();
+  const lowerName = (productName || '').toLowerCase().trim();
   
+  // 🔥 FIX: Force any product starting with or containing "បាវ" to the absolute bottom!
+  if (lowerName.startsWith('បាវ') || lowerName.includes('ថ្លៃបាវ')) {
+    return 9999; 
+  }
+
   // Checks from top to bottom. If a name has multiple keywords (e.g., "ម្លិះ 5451"), 
   // it assigns it to whichever keyword appears highest on the list.
   for (let i = 0; i < MASTER_RICE_ORDER.length; i++) {
@@ -24,7 +29,7 @@ export const getCategoryPriority = (productName: string) => {
       return i; // Returns 0 for top priority, 1 for second, etc.
     }
   }
-  return 999; // Sends unrecognized rice (Other) to the absolute bottom
+  return 999; // Sends unrecognized rice (Other) below the main list, but above the bags
 };
 
 // 🚦 THE MASTER COMPARATOR
