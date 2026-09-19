@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabaseClient'
 import { useRouter } from 'next/navigation'
 import { useUserRole } from '@/lib/useUserRole'
 import AdminGuard from '@/components/AdminGuard'
-import { useBranch } from '@/components/BranchContext' // 🔥 ADDED: Multi-Tenant Architecture
+import { useBranch } from '@/components/BranchContext' 
 
 // ==========================================
 // ROBUST LIVE COMMA FORMATTER 
@@ -54,9 +54,8 @@ function CurrencyInput({ value, onChange, onBlur, placeholder, style, className 
 
 export default function SettingsPage() {
   const router = useRouter()
-  const { activeBranchId } = useBranch() // 🔥 TUNED INTO GLOBAL MEMORY
+  const { activeBranchId } = useBranch() 
   
-  // 🚀 AUTH & ROLE STATE
   const { role, loadingRole } = useUserRole()
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -66,26 +65,52 @@ export default function SettingsPage() {
   const [exchangeRate, setExchangeRate] = useState<number>(4000)
   const [isResetting, setIsResetting] = useState(false)
 
-  // 🔥 CLOSURE FIX: Wrap in useCallback to dynamically track activeBranchId
+  // --- BRANDING STATE ---
+      const [shopName, setShopName] = useState('')
+      const [currentLogo, setCurrentLogo] = useState('')
+      const [logoFile, setLogoFile] = useState<File | null>(null)
+      const [isSavingBranding, setIsSavingBranding] = useState(false)
+
+      // --- ADD STAFF STATE ---
+      const [isAddUserOpen, setIsAddUserOpen] = useState(false);
+      const [newUserForm, setNewUserForm] = useState({
+        email: '',
+        password: '',
+        full_name: '',
+        role: 'cashier',
+      });
+      const [isCreatingUser, setIsCreatingUser] = useState(false);
+
   const fetchSettings = useCallback(async () => {
     setLoading(true)
-    const branchKey = activeBranchId === 0 ? 'exchange_rate' : `exchange_rate_${activeBranchId}`;
-    const keys = [branchKey, 'exchange_rate'];
+    const suffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
+    const keys = [
+      `exchange_rate${suffix}`, 'exchange_rate',
+      `shop_name${suffix}`, 'shop_name',
+      `shop_logo${suffix}`, 'shop_logo'
+    ];
     
     const { data } = await supabase.from('app_settings').select('*').in('setting_key', keys)
     
     if (data) {
-      // Prioritize the branch-specific rate, fallback to global
-      const setting = data.find((s: any) => s.setting_key === branchKey) || data.find((s: any) => s.setting_key === 'exchange_rate');
-      if (setting) setExchangeRate(Number(setting.setting_value) || 4000)
+      // Exchange Rate
+      const exRate = data.find((s: any) => s.setting_key === `exchange_rate${suffix}`) || data.find((s: any) => s.setting_key === 'exchange_rate');
+      if (exRate) setExchangeRate(Number(exRate.setting_value) || 4000)
+
+      // Shop Name
+      const sName = data.find((s: any) => s.setting_key === `shop_name${suffix}`) || data.find((s: any) => s.setting_key === 'shop_name');
+      if (sName) setShopName(String(sName.setting_value) || '')
+
+      // Shop Logo
+      const sLogo = data.find((s: any) => s.setting_key === `shop_logo${suffix}`) || data.find((s: any) => s.setting_key === 'shop_logo');
+      if (sLogo) setCurrentLogo(String(sLogo.setting_value) || '')
     }
     setLoading(false)
   }, [activeBranchId]);
 
-  // 🔒 SECURITY FIX: Isolate profile reads to the active branch!
   const fetchProfiles = useCallback(async () => {
     let q = supabase.from('profiles').select('*').order('created_at', { ascending: true });
-    if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId); // 🔥 DYNAMIC BRANCH FILTER
+    if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId); 
     
     const { data, error } = await q;
     if (data) setProfiles(data)
@@ -97,27 +122,99 @@ export default function SettingsPage() {
     })
   }, [])
 
-  // 🔥 TRIGGER SECURE REFETCH: Updates everything when branch changes
   useEffect(() => {
-    setProfiles([]); // 💣 SECURITY WIPE: Clear profiles instantly on branch switch
+    setProfiles([]); 
     fetchProfiles()
     fetchSettings()
   }, [activeBranchId, fetchProfiles, fetchSettings])
 
-  async function updateSetting(key: string, val: number) {
-    // 🔥 SECURITY FIX: Isolate setting overrides to the active branch
+  async function updateSetting(key: string, val: any) {
     const branchKey = activeBranchId === 0 ? key : `${key}_${activeBranchId}`;
     const { error } = await supabase.from('app_settings').upsert({ setting_key: branchKey, setting_value: val }, { onConflict: 'setting_key' })
     if (error) alert(`Error saving ${key}: ${error.message}`)
   }
 
-  // 🚀 PERMISSION UPDATER
-  async function handleRoleUpdate(profileId: string, newRole: string) {
+  async function handleSaveBranding() {
+    setIsSavingBranding(true);
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('tenant_id')
+        .eq('id', currentUser?.id)
+        .single();
+        
+      const tenantId = profile?.tenant_id;
+      let finalLogoUrl = currentLogo;
+
+      if (logoFile && tenantId) {
+        const fileExt = logoFile.name.split('.').pop();
+        const filePath = `${tenantId}/logo-${Date.now()}.${fileExt}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('tenant-assets')
+          .upload(filePath, logoFile, { upsert: true });
+
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('tenant-assets')
+          .getPublicUrl(filePath);
+          
+        finalLogoUrl = publicUrl;
+        setCurrentLogo(publicUrl);
+      }
+
+      // Save to database
+      await updateSetting('shop_name', shopName);
+      if (finalLogoUrl) {
+        await updateSetting('shop_logo', finalLogoUrl);
+      }
+      
+      alert('Branding saved successfully!');
+    } catch (error: any) {
+      alert(`Error saving branding: ${error.message}`);
+    } finally {
+      setIsSavingBranding(false);
+    }
+  }
+
+  async function handleCreateUserSubmit(e: React.FormEvent) {
+        e.preventDefault();
+        setIsCreatingUser(true);
+
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const res = await fetch('/api/admin/create-user', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session?.access_token}`
+            },
+            body: JSON.stringify({
+              ...newUserForm,
+              branch_id: activeBranchId === 0 ? 1 : activeBranchId
+            })
+          });
+
+          const result = await res.json();
+          if (!res.ok) throw new Error(result.error);
+
+          alert(`Staff account created for ${newUserForm.email}!`);
+          setIsAddUserOpen(false);
+          setNewUserForm({ email: '', password: '', full_name: '', role: 'cashier' });
+          fetchProfiles();
+        } catch (err: any) {
+          alert(`Error: ${err.message}`);
+        } finally {
+          setIsCreatingUser(false);
+        }
+      }
+
+      async function handleRoleUpdate(profileId: string, newRole: string) {
     if (!confirm(`Are you sure you want to change this user's access level to ${newRole.toUpperCase() || 'NO ACCESS'}?`)) return;
 
     const roleValue = newRole === '' ? null : newRole;
     
-    // 🔒 SECURITY FIX: Enforce branch isolation on profile role updates
     let updateQuery = supabase.from('profiles').update({ role: roleValue }).eq('id', profileId);
     if (activeBranchId !== 0) updateQuery = updateQuery.eq('branch_id', activeBranchId);
 
@@ -137,7 +234,6 @@ export default function SettingsPage() {
   }
 
   const handleResetLayouts = async () => {
-    // 🛡️ UI FIX: Force user to type 'CONFIRM' to prevent accidental resets
     const userInput = prompt("⚠️ WARNING: This will reset all table column widths, sorts, and layouts across the entire app back to their default state.\n\nPlease type the word CONFIRM to proceed:");
     
     if (userInput !== "CONFIRM") {
@@ -149,7 +245,6 @@ export default function SettingsPage() {
     
     setIsResetting(true);
     try {
-      // 🔥 FIX: Collect the new POS/Rice layout keys and isolate the deletion to the active branch
       const branchSuffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
       const layoutKeys = [
         `pos_product_order${branchSuffix}`, `category_order${branchSuffix}`,
@@ -176,14 +271,12 @@ export default function SettingsPage() {
     <AdminGuard>
       <div className="main-wrapper" style={{ display: 'flex', flexDirection: 'column', height: '100dvh', overflow: 'hidden' }}>
         
-        {/* HEADER CONTAINER */}
         <div className="header-container" style={{ flexShrink: 0 }}>
           <div className="header-left">
             <h1 className="saas-page-title">⚙️ Access & Settings</h1>
           </div>
         </div>
 
-        {/* SCROLLABLE CONTENT AREA */}
         <div className="hide-scrollbar" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '60px', width: '100%', boxSizing: 'border-box' }}>
           <div className="settings-grid">
           
@@ -209,6 +302,56 @@ export default function SettingsPage() {
             </button>
           </div>
 
+          {/* === NEW CARD: WHITE-LABEL BRANDING === */}
+          <div className="saas-card">
+            <h2 className="saas-card-title" style={{ fontSize: '15px', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>🎨 White-Label Branding</h2>
+            <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: 1.5 }}>
+              Customize the receipt name and logo that appears on your customer invoices.
+            </p>
+
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label className="saas-card-title" style={{ color: '#166534', display: 'block', fontSize: '11px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Receipt Shop Name</label>
+                <input
+                  type="text"
+                  value={shopName}
+                  onChange={(e) => setShopName(e.target.value)}
+                  placeholder="e.g., Heng Heng Rice Depot"
+                  className="saas-input"
+                  style={{ border: '2px solid #22c55e', width: '100%' }}
+                />
+              </div>
+
+              <div>
+                <label className="saas-card-title" style={{ color: '#166534', display: 'block', fontSize: '11px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Receipt Logo</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '8px' }}>
+                  {currentLogo ? (
+                    <img src={currentLogo} alt="Store Logo" style={{ width: '64px', height: '64px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #22c55e' }} />
+                  ) : (
+                    <div style={{ width: '64px', height: '64px', background: '#dcfce7', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed #22c55e' }}>
+                      <span style={{ fontSize: '10px', color: '#15803d' }}>No Logo</span>
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
+                    style={{ fontSize: '12px' }}
+                  />
+                </div>
+              </div>
+
+              <button 
+                onClick={handleSaveBranding} 
+                disabled={isSavingBranding}
+                className="saas-btn" 
+                style={{ background: '#22c55e', color: 'white', padding: '12px', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
+              >
+                {isSavingBranding ? 'Uploading...' : 'Save Branding'}
+              </button>
+            </div>
+          </div>
+
           {/* === CARD 2: SYSTEM CONSTANTS === */}
           <div className="saas-card">
             <h2 className="saas-card-title" style={{ fontSize: '15px', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>🌐 Global Business Constants</h2>
@@ -232,12 +375,22 @@ export default function SettingsPage() {
           </div>
 
           {/* === CARD 3: USER PERMISSIONS === */}
-          <div className="saas-card" style={{ gridColumn: '1 / -1' }}>
-            <h2 className="saas-card-title" style={{ fontSize: '15px', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>👥 User Permissions & Roles</h2>
-            <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: 1.5 }}>
-              Change the access level for your staff. <br/>
-              <strong style={{ color: '#b45309' }}>To Add Users:</strong> Create them securely in your <i>Supabase Auth Dashboard</i>. They will instantly appear below so you can assign their role.
-            </div>
+              <div className="saas-card" style={{ gridColumn: '1 / -1' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h2 className="saas-card-title" style={{ margin: 0, fontSize: '15px', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    👥 User Permissions & Roles
+                  </h2>
+                  <button 
+                    onClick={() => setIsAddUserOpen(true)} 
+                    className="saas-btn"
+                    style={{ padding: '8px 16px', fontSize: '13px', background: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    + Add Staff
+                  </button>
+                </div>
+                <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: 1.5 }}>
+                  Change the access level for your staff. Or click "Add Staff" to create a new login.
+                </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {profiles.map(p => (
@@ -319,9 +472,46 @@ export default function SettingsPage() {
           </div>
 
           </div>
-        </div>
-        
-        <style jsx global>{`
+            </div>
+
+            {/* === ADD STAFF MODAL === */}
+            {isAddUserOpen && (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '16px' }}>
+                <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(0,0,0,0.15)' }}>
+                  <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: 'bold' }}>👤 Register Staff Member</h3>
+                  <form onSubmit={handleCreateUserSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b' }}>FULL NAME</label>
+                      <input required className="saas-input" value={newUserForm.full_name} onChange={e => setNewUserForm({ ...newUserForm, full_name: e.target.value })} placeholder="e.g. Sok Chea" />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b' }}>EMAIL</label>
+                      <input type="email" required className="saas-input" value={newUserForm.email} onChange={e => setNewUserForm({ ...newUserForm, email: e.target.value })} placeholder="staff@example.com" />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b' }}>TEMPORARY PASSWORD</label>
+                      <input type="password" required minLength={6} className="saas-input" value={newUserForm.password} onChange={e => setNewUserForm({ ...newUserForm, password: e.target.value })} placeholder="••••••••" />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b' }}>INITIAL ROLE</label>
+                      <select className="saas-input" value={newUserForm.role} onChange={e => setNewUserForm({ ...newUserForm, role: e.target.value })}>
+                        <option value="cashier">🛒 Cashier (POS Only)</option>
+                        <option value="manager">🛡️ Manager</option>
+                        <option value="admin">👑 Master Admin</option>
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
+                      <button type="button" onClick={() => setIsAddUserOpen(false)} className="saas-btn saas-btn-secondary">Cancel</button>
+                      <button type="submit" disabled={isCreatingUser} className="saas-btn" style={{ background: '#10b981', color: 'white', border: 'none' }}>
+                        {isCreatingUser ? 'Creating...' : 'Create Account'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+            
+            <style jsx global>{`
           /* 🔥 DESKTOP LAYOUT */
           .main-wrapper { 
             padding: max(20px, env(safe-area-inset-top, 20px)) 24px 24px 24px; 
