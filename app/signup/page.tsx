@@ -2,8 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import SuperAdminGuard from '@/components/SuperAdminGuard';
 
 export default function SignUpPage() {
+  
   const router = useRouter();
   const [form, setForm] = useState({ company_name: '', full_name: '', email: '', password: '' });
   const [isLoading, setIsLoading] = useState(false);
@@ -38,7 +40,8 @@ export default function SignUpPage() {
   // === SUCCESS SCREEN ===
   if (isSubmitted) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
+      <SuperAdminGuard>
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
         <div style={{ background: '#fff', padding: '40px', borderRadius: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.05)', width: '100%', maxWidth: '450px', textAlign: 'center' }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>⏳</div>
           <h1 style={{ margin: '0 0 12px 0', color: '#0f172a', fontSize: '24px' }}>Request Received</h1>
@@ -53,12 +56,14 @@ export default function SignUpPage() {
           </button>
         </div>
       </div>
+      </SuperAdminGuard>
     );
   }
 
   // === APPLICATION FORM ===
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
+    <SuperAdminGuard>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
       <div style={{ background: '#fff', padding: '40px', borderRadius: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.05)', width: '100%', maxWidth: '450px' }}>
         <div style={{ textAlign: 'center', marginBottom: '30px' }}>
           <h1 style={{ margin: '0 0 8px 0', color: '#0f172a', fontSize: '24px' }}>Request a Workspace</h1>
@@ -136,5 +141,6 @@ export default function SignUpPage() {
         </div>
       </div>
     </div>
+    </SuperAdminGuard>
   );
 }

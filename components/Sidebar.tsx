@@ -15,6 +15,7 @@ interface MenuItem {
   label: string;
   href: string;
   adminOnly: boolean;
+  superAdminOnly?: boolean; // 🔥 NEW
 }
 
 const defaultMenuItems: MenuItem[] = [
@@ -29,9 +30,9 @@ const defaultMenuItems: MenuItem[] = [
   { label: '🧑‍🌾 Customer Database', href: '/customerdatabase', adminOnly: false },
   { label: '🔐 Master Biz Database', href: '/bizdatabase', adminOnly: false },
   { label: '📲 Report', href: '/report', adminOnly: false },
-  { label: '🛠️ Dev Test', href: '/dev-test', adminOnly: true },
+  { label: '🛠️ Dev Test', href: '/dev-test', adminOnly: true, superAdminOnly: true }, // 🔥 Hidden from normal admins
   { label: '⚙️ Settings', href: '/settings', adminOnly: true },
-  { label: '📋 Signup', href: '/signup', adminOnly: false }
+  { label: '📋 Signup', href: '/signup', adminOnly: true, superAdminOnly: true } // 🔥 Hidden from normal admins
 ]
 
 // 🔥 NEW: PROFESSIONAL SORTABLE ITEM COMPONENT (Whole Item Draggable)
@@ -92,14 +93,22 @@ export default function Sidebar() {
   const { role, loadingRole } = useUserRole();
   const { branches, activeBranchId, setActiveBranchId } = useBranch();
 
-  const [isMounted, setIsMounted] = useState(false); // 🔥 FIX: State to prevent SSR mismatch
+  const [isMounted, setIsMounted] = useState(false); 
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false); // 🔥 NEW: Store God Mode Status
 
   const sidebarRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
 
-  // 🔥 FIX: Set mounted to true once the browser takes over
   useEffect(() => {
     setIsMounted(true);
+    
+    // 🔥 Fetch God Mode status when Sidebar loads
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (user) {
+        const { data } = await supabase.from('profiles').select('is_super_admin').eq('id', user.id).single();
+        setIsSuperAdmin(data?.is_super_admin || false);
+      }
+    });
   }, []);
 
   // 🔥 NEW: THE SMART GATEKEEPER
@@ -248,7 +257,8 @@ export default function Sidebar() {
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={menuItems.map(i => i.label)} strategy={verticalListSortingStrategy}>
                   {menuItems.map((item) => {
-                    const isAllowed = !item.adminOnly || (!loadingRole && role === 'admin');
+                    // 🔥 Blocks regular users from admin routes, and blocks regular admins from superAdmin routes
+                    const isAllowed = (!item.adminOnly || (!loadingRole && role === 'admin')) && (!item.superAdminOnly || isSuperAdmin);
                     if (!isAllowed) return null;
                     const isActive = pathname === item.href;
                     return (
@@ -265,7 +275,7 @@ export default function Sidebar() {
             ) : (
               /* 🔥 SSR FALLBACK: Renders static links to prevent flashing before hydration */
               menuItems.map((item) => {
-                const isAllowed = !item.adminOnly || (!loadingRole && role === 'admin');
+                const isAllowed = (!item.adminOnly || (!loadingRole && role === 'admin')) && (!item.superAdminOnly || isSuperAdmin);
                 if (!isAllowed) return null;
                 const isActive = pathname === item.href;
                 return (
