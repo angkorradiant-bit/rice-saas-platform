@@ -15,6 +15,7 @@ interface BranchContextType {
   activeBranchId: number;
   setActiveBranchId: (id: number) => void;
   isLoadingBranches: boolean;
+  addBranch: (newBranch: Branch) => void; // 🔥 ADDED THIS
 }
 
 const BranchContext = createContext<BranchContextType | undefined>(undefined);
@@ -95,7 +96,8 @@ export function BranchProvider({ children }: { children: ReactNode }) {
       activeBranchId, 
       branches, 
       setActiveBranchId: handleSetBranch,
-      isLoadingBranches // 🔥 FIX 1: Added this to satisfy the TypeScript interface
+      isLoadingBranches,
+      addBranch: (newBranch: Branch) => setBranches(prev => [...prev, newBranch]) // 🔥 INSTANT UI UPDATE
     }}>
       {children}
     </BranchContext.Provider>

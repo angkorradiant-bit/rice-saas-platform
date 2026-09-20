@@ -3,11 +3,11 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function POST(request: Request) {
   try {
-    const { email, password, full_name, role, branch_id } = await request.json();
+    const { user_id } = await request.json();
     const authHeader = request.headers.get('Authorization');
 
-    if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!authHeader || !user_id) {
+      return NextResponse.json({ error: 'Unauthorized or missing user ID' }, { status: 400 });
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
 
     const { data: callerProfile } = await callerClient
       .from('profiles')
-      .select('role, tenant_id')
+      .select('role')
       .eq('id', callerUser.id)
       .single();
 
@@ -31,22 +31,21 @@ export async function POST(request: Request) {
       throw new Error('Forbidden: Admins only');
     }
 
+    if (callerUser.id === user_id) {
+      throw new Error('You cannot delete your own active account.');
+    }
+
     const adminClient = createClient(supabaseUrl, supabaseServiceKey);
-    const { data: authData, error: createErr } = await adminClient.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        full_name,
-        role,
-        tenant_id: callerProfile.tenant_id,
-        branch_id: Number(branch_id)
-      }
-    });
+    
+    // 1. Manually delete from profiles table first to prevent Foreign Key blocks
+    await adminClient.from('profiles').delete().eq('id', user_id);
+    
+    // 2. Permanently delete their login from Supabase Auth
+    const { error: deleteErr } = await adminClient.auth.admin.deleteUser(user_id);
 
-    if (createErr) throw createErr;
+    if (deleteErr) throw deleteErr;
 
-    return NextResponse.json({ success: true, user: authData.user });
+    return NextResponse.json({ success: true });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

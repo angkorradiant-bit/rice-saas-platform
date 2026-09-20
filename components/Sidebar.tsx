@@ -30,7 +30,8 @@ const defaultMenuItems: MenuItem[] = [
   { label: '🔐 Master Biz Database', href: '/bizdatabase', adminOnly: false },
   { label: '📲 Report', href: '/report', adminOnly: false },
   { label: '🛠️ Dev Test', href: '/dev-test', adminOnly: true },
-  { label: '⚙️ Settings', href: '/settings', adminOnly: true }
+  { label: '⚙️ Settings', href: '/settings', adminOnly: true },
+  { label: '⚙️ Signup', href: '/signup', adminOnly: false }
 ]
 
 // 🔥 NEW: PROFESSIONAL SORTABLE ITEM COMPONENT (Whole Item Draggable)

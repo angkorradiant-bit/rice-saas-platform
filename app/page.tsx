@@ -49,22 +49,69 @@ export default function LoginPage() {
   }, [router])
 
   async function handleLogin(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    setErrorMsg('')
+    e.preventDefault();
+    setLoading(true); // 🔥 Fixed
+    setErrorMsg('');
 
-    // Supabase automatically handles local storage persistence in the background indefinitely.
-    const { error } = await supabase.auth.signInWithPassword({ 
-      email, 
-      password 
-    })
+    try {
+      // 1. Attempt standard login
+      const { data: authData, error: loginErr } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) {
-      setErrorMsg(error.message)
-      setLoading(false)
-    } else {
-      // Upon successful login, go directly to the POS
-      router.push('/pos')
+      if (loginErr) throw loginErr;
+
+      // 2. 🔥 SaaS BILLING GATEKEEPER
+      if (authData.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('tenant_id')
+          .eq('id', authData.user.id)
+          .single();
+
+        if (profile?.tenant_id) {
+          const { data: tenant } = await supabase
+            .from('tenants')
+            .select('subscription_status, trial_end_date, subscription_end_date')
+            .eq('id', profile.tenant_id)
+            .single();
+
+          const status = tenant?.subscription_status;
+
+          // Mode 1: PENDING
+          if (status === 'Pending') {
+            await supabase.auth.signOut();
+            throw new Error('Your workspace is still pending approval. We will email you when it is ready.');
+          }
+
+          // Mode 2: TRIAL
+          if (status === 'Trial') {
+            if (tenant?.trial_end_date && new Date(tenant.trial_end_date) < new Date()) {
+              await supabase.auth.signOut();
+              throw new Error('Your 14-day trial has expired. Please contact support to upgrade to a Monthly plan.');
+            }
+          }
+
+          // Mode 3: MONTHLY ACTIVE
+          if (status === 'Monthly') {
+            if (tenant?.subscription_end_date && new Date(tenant.subscription_end_date) < new Date()) {
+              await supabase.auth.signOut();
+              throw new Error('Your monthly subscription has expired. Please renew to regain access to your POS.');
+            }
+          }
+
+          // Mode 4: MASTER 
+          // If status is 'Master', the code naturally skips all the IF statements above and lets you straight in!
+        }
+      }
+
+      // 3. If they are Active or Trial, let them in!
+      router.push('/dashboard');
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setLoading(false); // 🔥 Fixed
     }
   }
 

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useUserRole } from '@/lib/useUserRole'
 import AdminGuard from '@/components/AdminGuard'
 import { useBranch } from '@/components/BranchContext' 
+import { useToast } from '@/components/ToastProvider'
 
 // ==========================================
 // ROBUST LIVE COMMA FORMATTER 
@@ -54,7 +55,8 @@ function CurrencyInput({ value, onChange, onBlur, placeholder, style, className 
 
 export default function SettingsPage() {
   const router = useRouter()
-  const { activeBranchId } = useBranch() 
+  const { activeBranchId, branches, addBranch } = useBranch() 
+  const { showToast } = useToast()
   
   const { role, loadingRole } = useUserRole()
   const [currentUser, setCurrentUser] = useState<any>(null)
@@ -78,10 +80,22 @@ export default function SettingsPage() {
         password: '',
         full_name: '',
         role: 'cashier',
+        branch_id: '', // 🔥 ADDED THIS
       });
       const [isCreatingUser, setIsCreatingUser] = useState(false);
 
-  const fetchSettings = useCallback(async () => {
+      // --- ADD BRANCH STATE ---
+      const [isAddBranchOpen, setIsAddBranchOpen] = useState(false);
+      const [newBranchName, setNewBranchName] = useState('');
+      const [isCreatingBranch, setIsCreatingBranch] = useState(false);
+      const [expandedBranchId, setExpandedBranchId] = useState<number | null>(null);
+
+      // 🔥 Declare isAdmin here so fetchProfiles can see it!
+      const isAdmin = role === 'admin' || currentUser?.user_metadata?.role === 'admin';
+      const isMainBranch = activeBranchId === 0 || activeBranchId === 1 || (branches.length > 0 && activeBranchId === branches[0]?.id);
+
+      // 🔥 FIX: Renamed back to fetchSettings
+      const fetchSettings = useCallback(async () => {
     setLoading(true)
     const suffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
     const keys = [
@@ -110,11 +124,16 @@ export default function SettingsPage() {
 
   const fetchProfiles = useCallback(async () => {
     let q = supabase.from('profiles').select('*').order('created_at', { ascending: true });
-    if (activeBranchId !== 0) q = q.eq('branch_id', activeBranchId); 
+    
+    // 🔥 If NOT an Admin, lock them to their specific branch. 
+    // If they ARE an admin, fetch absolutely everyone!
+    if (!isAdmin) {
+      q = q.eq('branch_id', activeBranchId === 0 ? 1 : activeBranchId); 
+    }
     
     const { data, error } = await q;
     if (data) setProfiles(data)
-  }, [activeBranchId]);
+  }, [activeBranchId, isAdmin]); // Ensure isAdmin is in the dependency array
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -192,21 +211,54 @@ export default function SettingsPage() {
             },
             body: JSON.stringify({
               ...newUserForm,
-              branch_id: activeBranchId === 0 ? 1 : activeBranchId
+              // 🔥 Uses the dropdown selection, otherwise falls back to active branch
+              branch_id: newUserForm.branch_id || (activeBranchId === 0 ? 1 : activeBranchId)
             })
           });
 
           const result = await res.json();
           if (!res.ok) throw new Error(result.error);
 
-          alert(`Staff account created for ${newUserForm.email}!`);
+          showToast('success', 'Staff Created', `Account created for ${newUserForm.email}!`);
           setIsAddUserOpen(false);
-          setNewUserForm({ email: '', password: '', full_name: '', role: 'cashier' });
+          setNewUserForm({ email: '', password: '', full_name: '', role: 'cashier', branch_id: '' });
           fetchProfiles();
         } catch (err: any) {
-          alert(`Error: ${err.message}`);
+          showToast('error', 'Creation Failed', err.message);
         } finally {
           setIsCreatingUser(false);
+        }
+      }
+
+      async function handleCreateBranchSubmit(e: React.FormEvent) {
+        e.preventDefault();
+        if (!newBranchName.trim()) return;
+        setIsCreatingBranch(true);
+
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const res = await fetch('/api/admin/create-branch', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session?.access_token}`
+            },
+            body: JSON.stringify({ name: newBranchName })
+          });
+
+          const result = await res.json();
+          if (!res.ok) throw new Error(result.error);
+
+          showToast('success', 'Branch Created', `Store "${result.branch.name}" is now live!`);
+          setIsAddBranchOpen(false);
+          setNewBranchName('');
+          
+          // 🔥 Instantly updates the sidebar dropdown AND the visual list below without a page refresh!
+          addBranch(result.branch); 
+        } catch (err: any) {
+          showToast('error', 'Creation Failed', err.message);
+        } finally {
+          setIsCreatingBranch(false);
         }
       }
 
@@ -224,6 +276,30 @@ export default function SettingsPage() {
       alert(`Error updating permissions: ${error.message}`);
     } else {
       setProfiles(prev => prev.map(p => p.id === profileId ? { ...p, role: roleValue } : p));
+    }
+  }
+
+  async function handleDeleteUser(userId: string) {
+    if (!confirm("⚠️ Are you absolutely sure you want to delete this staff member? This will permanently revoke their access.")) return;
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
+        body: JSON.stringify({ user_id: userId })
+      });
+
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error);
+
+      showToast('success', 'Staff Deleted', 'The account has been permanently removed.');
+      fetchProfiles();
+    } catch (err: any) {
+      showToast('error', 'Delete Failed', err.message);
     }
   }
 
@@ -267,8 +343,10 @@ export default function SettingsPage() {
     }
   }
 
+  if (loadingRole) return null;
+
   return (
-    <AdminGuard>
+    <>
       <div className="main-wrapper" style={{ display: 'flex', flexDirection: 'column', height: '100dvh', overflow: 'hidden' }}>
         
         <div className="header-container" style={{ flexShrink: 0 }}>
@@ -303,6 +381,7 @@ export default function SettingsPage() {
           </div>
 
           {/* === NEW CARD: WHITE-LABEL BRANDING === */}
+          {role === 'admin' && (
           <div className="saas-card">
             <h2 className="saas-card-title" style={{ fontSize: '15px', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>🎨 White-Label Branding</h2>
             <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: 1.5 }}>
@@ -351,8 +430,10 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
+          )}
 
           {/* === CARD 2: SYSTEM CONSTANTS === */}
+          {role === 'admin' && (
           <div className="saas-card">
             <h2 className="saas-card-title" style={{ fontSize: '15px', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>🌐 Global Business Constants</h2>
             <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: 1.5 }}>
@@ -373,8 +454,88 @@ export default function SettingsPage() {
               />
             </div>
           </div>
+          )}
 
-          {/* === CARD 3: USER PERMISSIONS === */}
+          {/* === CARD 4: MANAGE LOCATIONS (MAIN BRANCH ADMIN ONLY) === */}
+          {isAdmin && isMainBranch && (
+            <div className="saas-card" style={{ gridColumn: '1 / -1', marginBottom: '24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <h2 className="saas-card-title" style={{ margin: 0, fontSize: '15px', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      🏬 Manage Store Locations
+                    </h2>
+                    <button 
+                      onClick={() => setIsAddBranchOpen(true)} 
+                      className="saas-btn"
+                      style={{ padding: '8px 16px', fontSize: '13px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      + Add New Branch
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.5, marginBottom: '20px' }}>
+                    Expand your business by adding new physical store locations. Each branch gets its own isolated inventory, sales, and expense tracking.
+                  </div>
+
+                  {/* 🔥 Visual List of Active Branches with Staff Dropdown */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {branches.map((branch) => {
+                      const isExpanded = expandedBranchId === branch.id;
+                      const branchStaff = profiles.filter(p => p.branch_id === branch.id);
+
+                      return (
+                        <div key={branch.id} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
+                          {/* Header / Clickable Area */}
+                          <div 
+                            onClick={() => setExpandedBranchId(isExpanded ? null : branch.id)}
+                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', cursor: 'pointer', background: isExpanded ? '#f1f5f9' : 'transparent', userSelect: 'none' }}
+                          >
+                            <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#334155', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <span style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', display: 'inline-block', fontSize: '12px', color: '#64748b' }}>
+                                ▶
+                              </span>
+                              🏬 {branch.name}
+                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold' }}>{branchStaff.length} Staff</span>
+                              <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b', background: '#e2e8f0', padding: '4px 10px', borderRadius: '12px' }}>
+                                ID: {branch.id}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Expanded Staff List */}
+                          {isExpanded && (
+                            <div style={{ padding: '12px 16px', borderTop: '1px solid #e2e8f0', background: '#ffffff' }}>
+                              {branchStaff.length === 0 ? (
+                                <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' }}>No staff assigned to this branch.</div>
+                              ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                  {branchStaff.map(staff => (
+                                    <div key={staff.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', padding: '8px', background: '#f8fafc', borderRadius: '6px' }}>
+                                      <div>
+                                        <div style={{ fontWeight: 'bold', color: '#334155' }}>{staff.full_name || 'Unnamed Staff'}</div>
+                                        <div style={{ color: '#64748b', fontSize: '11px' }}>{staff.email}</div>
+                                      </div>
+                                      <span style={{
+                                        padding: '4px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase',
+                                        background: staff.role === 'admin' ? '#fef3c7' : staff.role === 'manager' ? '#e0f2fe' : '#f3e8ff',
+                                        color: staff.role === 'admin' ? '#b45309' : staff.role === 'manager' ? '#0369a1' : '#7e22ce',
+                                      }}>
+                                        {staff.role}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* === CARD 3: USER PERMISSIONS === */}
               <div className="saas-card" style={{ gridColumn: '1 / -1' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <h2 className="saas-card-title" style={{ margin: 0, fontSize: '15px', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -392,45 +553,34 @@ export default function SettingsPage() {
                   Change the access level for your staff. Or click "Add Staff" to create a new login.
                 </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {profiles.map(p => (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {profiles
+                .filter(p => isMainBranch ? true : p.role !== 'admin')
+                .map(p => (
                 <div key={p.id} style={{
                   background: '#ffffff',
                   border: '1px solid #e2e8f0',
-                  borderRadius: '12px',
-                  padding: '16px',
-                  boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)',
+                  borderRadius: '8px',
+                  padding: '12px 16px',
+                  boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
                   display: 'flex',
-                  flexDirection: 'column',
-                  gap: '16px'
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '12px'
                 }}>
                   
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '15px', wordBreak: 'break-word', lineHeight: 1.3 }}>
-                        {p.full_name || 'New Staff Member'}
-                      </div>
-                      <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
-                        ID: {p.id.split('-')[0]}...
-                      </div>
+                  {/* Left Side: Name and ID */}
+                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {p.full_name || 'New Staff Member'}
                     </div>
-                    
-                    <div style={{ flexShrink: 0 }}>
-                      <span style={{
-                         padding: '6px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: 'bold', display: 'inline-block',
-                         background: p.role === 'admin' ? '#fef3c7' : p.role === 'manager' ? '#e0f2fe' : p.role === 'cashier' ? '#f3e8ff' : '#f1f5f9',
-                         color: p.role === 'admin' ? '#b45309' : p.role === 'manager' ? '#0369a1' : p.role === 'cashier' ? '#7e22ce' : '#475569',
-                         textTransform: 'uppercase', letterSpacing: '0.5px'
-                      }}>
-                         {p.role ? String(p.role) : 'NO ACCESS'}
-                      </span>
+                    <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+                      ID: {p.id.split('-')[0]}...
                     </div>
                   </div>
 
-                  <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
-                    <label style={{ display: 'block', fontSize: '11px', color: '#64748b', marginBottom: '8px', fontWeight: 'bold', textTransform: 'uppercase' }}>
-                      Change Permission Level
-                    </label>
+                  {/* Right Side: Role Selector and Delete Button */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                     <select
                       className="saas-input"
                       value={p.role || ''}
@@ -438,16 +588,35 @@ export default function SettingsPage() {
                       disabled={p.id === currentUser?.id}
                       style={{ 
                         cursor: p.id === currentUser?.id ? 'not-allowed' : 'pointer', 
-                        width: '100%',
                         backgroundColor: p.id === currentUser?.id ? '#f8fafc' : '#ffffff',
-                        padding: '12px'
+                        padding: '8px 12px',
+                        margin: 0,
+                        fontSize: '13px',
+                        minWidth: '150px',
+                        height: '38px', // Fixed height to match button
+                        border: '1px solid #cbd5e1'
                       }}
                     >
                       <option value="">🚫 No Access</option>
-                      <option value="cashier">🛒 Cashier (POS Only)</option>
+                      <option value="cashier">🛒 Cashier</option>
                       <option value="manager">🛡️ Manager</option>
-                      <option value="admin">👑 Master Admin</option>
+                      <option value="admin">👑 Admin</option>
                     </select>
+                    
+                    {p.id !== currentUser?.id && (
+                      <button
+                        onClick={() => handleDeleteUser(p.id)}
+                        style={{
+                          background: '#fee2e2', color: '#b91c1c', border: 'none', borderRadius: '6px',
+                          width: '38px', height: '38px', // Square button to match select height perfectly
+                          fontSize: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          transition: 'background 0.2s', padding: 0
+                        }}
+                        title="Delete Staff Account"
+                      >
+                        🗑️
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -455,6 +624,7 @@ export default function SettingsPage() {
           </div>
 
           {/* === CARD 4: SYSTEM MAINTENANCE === */}
+          {role === 'admin' && (
           <div className="saas-card red" style={{ gridColumn: '1 / -1', background: '#fff1f2' }}>
             <h2 className="saas-card-title" style={{ color: '#be123c', fontSize: '15px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>🛠️ System Maintenance</h2>
             
@@ -470,9 +640,32 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
+          )}
 
           </div>
             </div>
+
+            {/* === ADD BRANCH MODAL === */}
+            {isAddBranchOpen && (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '16px' }}>
+                <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(0,0,0,0.15)' }}>
+                  <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: 'bold' }}>🏬 Create New Branch</h3>
+                  <form onSubmit={handleCreateBranchSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b' }}>BRANCH NAME</label>
+                      <input required autoFocus className="saas-input" value={newBranchName} onChange={e => setNewBranchName(e.target.value)} placeholder="e.g. Toul Kork Depot" />
+                    </div>
+                    
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
+                      <button type="button" onClick={() => setIsAddBranchOpen(false)} className="saas-btn saas-btn-secondary">Cancel</button>
+                      <button type="submit" disabled={isCreatingBranch} className="saas-btn" style={{ background: '#3b82f6', color: 'white', border: 'none' }}>
+                        {isCreatingBranch ? 'Creating...' : 'Create Branch'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
 
             {/* === ADD STAFF MODAL === */}
             {isAddUserOpen && (
@@ -491,6 +684,15 @@ export default function SettingsPage() {
                     <div>
                       <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b' }}>TEMPORARY PASSWORD</label>
                       <input type="password" required minLength={6} className="saas-input" value={newUserForm.password} onChange={e => setNewUserForm({ ...newUserForm, password: e.target.value })} placeholder="••••••••" />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b' }}>ASSIGN TO BRANCH</label>
+                      <select className="saas-input" required value={newUserForm.branch_id} onChange={e => setNewUserForm({ ...newUserForm, branch_id: e.target.value })}>
+                        <option value="" disabled>-- Select a Branch --</option>
+                        {branches.map(b => (
+                          <option key={b.id} value={b.id}>🏬 {b.name}</option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b' }}>INITIAL ROLE</label>
@@ -603,6 +805,6 @@ export default function SettingsPage() {
           }
         `}</style>
       </div>
-    </AdminGuard>
+    </>
   )
 }

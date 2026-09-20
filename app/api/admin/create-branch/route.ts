@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function POST(request: Request) {
   try {
-    const { email, password, full_name, role, branch_id } = await request.json();
+    const { name } = await request.json();
     const authHeader = request.headers.get('Authorization');
 
     if (!authHeader) {
@@ -14,13 +14,17 @@ export async function POST(request: Request) {
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
+    // 1. Verify the requester session
     const callerClient = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } }
     });
 
     const { data: { user: callerUser }, error: authErr } = await callerClient.auth.getUser();
-    if (authErr || !callerUser) throw new Error('Unauthorized');
+    if (authErr || !callerUser) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
+    // 2. Fetch their profile to prove they are an admin and get their tenant_id
     const { data: callerProfile } = await callerClient
       .from('profiles')
       .select('role, tenant_id')
@@ -28,26 +32,26 @@ export async function POST(request: Request) {
       .single();
 
     if (!callerProfile || callerProfile.role !== 'admin') {
-      throw new Error('Forbidden: Admins only');
+      return NextResponse.json({ error: 'Forbidden: Admins only' }, { status: 403 });
     }
 
+    // 3. Create the new branch securely linked to their tenant_id
     const adminClient = createClient(supabaseUrl, supabaseServiceKey);
-    const { data: authData, error: createErr } = await adminClient.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        full_name,
-        role,
-        tenant_id: callerProfile.tenant_id,
-        branch_id: Number(branch_id)
-      }
-    });
+    const { data: newBranch, error: insertError } = await adminClient
+      .from('branches')
+      .insert([
+        { 
+          name: name, 
+          tenant_id: callerProfile.tenant_id 
+        }
+      ])
+      .select()
+      .single();
 
-    if (createErr) throw createErr;
+    if (insertError) throw insertError;
 
-    return NextResponse.json({ success: true, user: authData.user });
+    return NextResponse.json({ success: true, branch: newBranch });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: err.message || 'Failed to create branch' }, { status: 500 });
   }
 }
