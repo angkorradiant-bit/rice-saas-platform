@@ -61,6 +61,7 @@ export default function SettingsPage() {
   const { role, loadingRole } = useUserRole()
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [tenantStatus, setTenantStatus] = useState<string>('')
+  const [tenantData, setTenantData] = useState<any>(null) // 🔥 NEW: Store all billing info
   const [loading, setLoading] = useState(true)
   const [profiles, setProfiles] = useState<any[]>([])
 
@@ -141,8 +142,12 @@ export default function SettingsPage() {
       if (user) {
         const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', user.id).single()
         if (profile?.tenant_id) {
-          const { data: tenant } = await supabase.from('tenants').select('subscription_status').eq('id', profile.tenant_id).single()
-          if (tenant) setTenantStatus(tenant.subscription_status)
+          // 🔥 Fetch EVERYTHING about the workspace, not just the status
+          const { data: tenant } = await supabase.from('tenants').select('*').eq('id', profile.tenant_id).single()
+          if (tenant) {
+            setTenantStatus(tenant.subscription_status)
+            setTenantData(tenant)
+          }
         }
       }
     })
@@ -341,6 +346,31 @@ export default function SettingsPage() {
                 {currentUser?.email || 'Unknown User'}
               </div>
               <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '8px', wordBreak: 'break-all' }}>Session ID: {currentUser?.id || 'N/A'}</div>
+            </div>
+
+            {/* 🔥 NEW: Active Subscription Display for the User */}
+            <div style={{ background: tenantData?.subscription_status === 'Monthly' ? '#f0fdf4' : '#fffbeb', padding: '16px', borderRadius: '8px', border: tenantData?.subscription_status === 'Monthly' ? '1px solid #bbf7d0' : '1px solid #fde047', marginBottom: '24px' }}>
+              <div style={{ fontSize: '11px', color: tenantData?.subscription_status === 'Monthly' ? '#166534' : '#b45309', marginBottom: '4px', fontWeight: 'bold', textTransform: 'uppercase' }}>Your Current Plan</div>
+              
+              <div style={{ fontSize: '16px', fontWeight: 'bold', color: tenantData?.subscription_status === 'Monthly' ? '#15803d' : '#d97706' }}>
+                {tenantData?.subscription_status === 'Trial-7' && '⏳ 7-Day Free Trial'}
+                {tenantData?.subscription_status === 'Trial' && '⏳ 14-Day Free Trial'}
+                {tenantData?.subscription_status === 'Monthly' && '✅ Monthly Premium Active'}
+                {tenantData?.subscription_status === 'Master' && '🛡️ Master Admin (Unlimited)'}
+                {tenantData?.subscription_status === 'Pending' && '🔒 Account Pending'}
+              </div>
+              
+              {/* Expiration Dates */}
+              {(tenantData?.subscription_status === 'Trial-7' || tenantData?.subscription_status === 'Trial') && tenantData?.trial_end_date && (
+                <div style={{ fontSize: '12px', color: '#b45309', marginTop: '8px', fontWeight: 'bold' }}>
+                  Expires: {new Date(tenantData.trial_end_date).toLocaleDateString()}
+                </div>
+              )}
+              {tenantData?.subscription_status === 'Monthly' && tenantData?.subscription_end_date && (
+                <div style={{ fontSize: '12px', color: '#166534', marginTop: '8px', fontWeight: 'bold' }}>
+                  Renews: {new Date(tenantData.subscription_end_date).toLocaleDateString()}
+                </div>
+              )}
             </div>
 
             <h3 style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>Account Management</h3>

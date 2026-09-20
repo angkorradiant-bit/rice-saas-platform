@@ -5,6 +5,7 @@ import SplashScreen from '@/components/SplashScreen'
 import { ToastProvider } from '@/components/ToastProvider'
 import AutoSyncHandler from '@/components/AutoSyncHandler' // 🔥 Added Import
 import { BranchProvider } from '@/components/BranchContext'
+import SaaSGuard from '@/components/SaaSGuard'
 
 export const metadata: Metadata = {
   title: 'Angkor Radiant Rice POS',
@@ -34,18 +35,20 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <ToastProvider>
-          <BranchProvider>  {/* <--- ADDED HERE */}
-            <SplashScreen>
-              <AutoSyncHandler />
-              
-              <div style={{ display: 'flex', width: '100%', height: '100%', overflow: 'hidden' }}>
-                <Sidebar />
-                <main className="app-scroller">
-                  {children}
-                </main>
-              </div>
-            </SplashScreen>
-          </BranchProvider> {/* <--- ADDED HERE */}
+          <BranchProvider>
+            <SaaSGuard> {/* 🔥 Global license enforcement */}
+              <SplashScreen>
+                <AutoSyncHandler />
+                
+                <div style={{ display: 'flex', width: '100%', height: '100%', overflow: 'hidden' }}>
+                  <Sidebar />
+                  <main className="app-scroller">
+                    {children}
+                  </main>
+                </div>
+              </SplashScreen>
+            </SaaSGuard>
+          </BranchProvider>
         </ToastProvider>
       </body>
     </html>
