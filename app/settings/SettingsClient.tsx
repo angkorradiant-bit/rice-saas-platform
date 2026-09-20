@@ -60,12 +60,12 @@ export default function SettingsPage() {
   
   const { role, loadingRole } = useUserRole()
   const [currentUser, setCurrentUser] = useState<any>(null)
+  const [tenantStatus, setTenantStatus] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [profiles, setProfiles] = useState<any[]>([])
 
   // --- FINANCIAL STATE ---
   const [exchangeRate, setExchangeRate] = useState<number>(4000)
-  const [isResetting, setIsResetting] = useState(false)
 
   // --- BRANDING STATE ---
       const [shopName, setShopName] = useState('')
@@ -136,8 +136,15 @@ export default function SettingsPage() {
   }, [activeBranchId, isAdmin]); // Ensure isAdmin is in the dependency array
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
       setCurrentUser(user)
+      if (user) {
+        const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', user.id).single()
+        if (profile?.tenant_id) {
+          const { data: tenant } = await supabase.from('tenants').select('subscription_status').eq('id', profile.tenant_id).single()
+          if (tenant) setTenantStatus(tenant.subscription_status)
+        }
+      }
     })
   }, [])
 
@@ -309,40 +316,6 @@ export default function SettingsPage() {
     router.push('/');
   }
 
-  const handleResetLayouts = async () => {
-    const userInput = prompt("⚠️ WARNING: This will reset all table column widths, sorts, and layouts across the entire app back to their default state.\n\nPlease type the word CONFIRM to proceed:");
-    
-    if (userInput !== "CONFIRM") {
-      if (userInput !== null) {
-        alert("❌ Reset canceled. You must type exactly 'CONFIRM' in all caps to proceed.");
-      }
-      return;
-    }
-    
-    setIsResetting(true);
-    try {
-      const branchSuffix = activeBranchId === 0 ? '' : `_${activeBranchId}`;
-      const layoutKeys = [
-        `pos_product_order${branchSuffix}`, `category_order${branchSuffix}`,
-        `column_widths${branchSuffix}`, `column_order${branchSuffix}`, 
-        `pending_col_widths${branchSuffix}`, `pending_col_order${branchSuffix}`,
-        `supplier_col_widths${branchSuffix}`, `supplier_col_order${branchSuffix}`,
-        `product_sort${branchSuffix}`, `pending_sort${branchSuffix}`, `supplier_sort${branchSuffix}`,
-        `cust_col_widths${branchSuffix}`, `cust_col_order${branchSuffix}`, 
-        `biz_col_widths${branchSuffix}`, `biz_sum_cols${branchSuffix}`, `biz_daily_cols${branchSuffix}`, `biz_retail_cols${branchSuffix}`, `biz_exp_cols${branchSuffix}`
-      ];
-      
-      const { error } = await supabase.from('app_settings').delete().in('setting_key', layoutKeys);
-      if (error) throw error;
-      
-      alert("✅ All UI Layouts have been successfully reset. Refresh your other tabs to see the changes.");
-    } catch (err: any) {
-      alert(`Error resetting layouts: ${err.message}`);
-    } finally {
-      setIsResetting(false);
-    }
-  }
-
   if (loadingRole) return null;
 
   return (
@@ -375,9 +348,21 @@ export default function SettingsPage() {
               Signing out will safely end your current session on this device. All your inventory, sales, and customer data will remain completely intact in the database.
             </p>
 
-            <button onClick={handleSignOut} className="saas-btn saas-btn-secondary" style={{ marginTop: 'auto', padding: '12px 24px' }}>
-              Sign Out
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: 'auto' }}>
+              {tenantStatus === 'Master' && (
+                <button 
+                  onClick={() => router.push('/settings/master')}
+                  className="saas-btn"
+                  style={{ background: '#f3e8ff', color: '#7e22ce', border: '1px solid #e9d5ff', padding: '12px 24px', fontWeight: 'bold', display: 'flex', justifyContent: 'center', gap: '8px' }}
+                >
+                  🛡️ SaaS Command Center
+                </button>
+              )}
+
+              <button onClick={handleSignOut} className="saas-btn saas-btn-secondary" style={{ padding: '12px 24px' }}>
+                Sign Out
+              </button>
+            </div>
           </div>
 
           {/* === NEW CARD: WHITE-LABEL BRANDING === */}
@@ -622,25 +607,6 @@ export default function SettingsPage() {
               ))}
             </div>
           </div>
-
-          {/* === CARD 4: SYSTEM MAINTENANCE === */}
-          {role === 'admin' && (
-          <div className="saas-card red" style={{ gridColumn: '1 / -1', background: '#fff1f2' }}>
-            <h2 className="saas-card-title" style={{ color: '#be123c', fontSize: '15px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>🛠️ System Maintenance</h2>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginTop: '16px' }}>
-              <div style={{ flex: 1, minWidth: '250px' }}>
-                <h3 style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold', color: '#991b1b' }}>Reset UI Layouts</h3>
-                <p style={{ fontSize: '13px', color: '#ef4444', margin: 0, lineHeight: 1.5 }}>
-                  If your tables disappear or column widths get completely broken because of accidental dragging, click this button to factory reset all table views across the app.
-                </p>
-              </div>
-              <button onClick={handleResetLayouts} disabled={isResetting} className="saas-btn saas-btn-danger" style={{ padding: '12px 24px', whiteSpace: 'nowrap' }}>
-                {isResetting ? 'Processing...' : '⚠️ Reset All Tables'}
-              </button>
-            </div>
-          </div>
-          )}
 
           </div>
             </div>
