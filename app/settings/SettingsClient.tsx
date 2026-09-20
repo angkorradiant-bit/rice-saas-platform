@@ -124,23 +124,26 @@ export default function SettingsPage() {
   }, [activeBranchId]);
 
   const fetchProfiles = useCallback(async () => {
-    let q = supabase.from('profiles').select('*').order('created_at', { ascending: true });
+    // 🔥 We add branches(name) and tenants(name) to instantly pull the connected text names!
+    let q = supabase.from('profiles').select('*, branches(name), tenants(name)').order('created_at', { ascending: true });
     
-    // 🔥 If NOT an Admin, lock them to their specific branch. 
-    // If they ARE an admin, fetch absolutely everyone!
+    // If NOT an Admin, lock them to their specific branch. 
     if (!isAdmin) {
       q = q.eq('branch_id', activeBranchId === 0 ? 1 : activeBranchId); 
     }
     
     const { data, error } = await q;
     if (data) setProfiles(data)
-  }, [activeBranchId, isAdmin]); // Ensure isAdmin is in the dependency array
+  }, [activeBranchId, isAdmin]);
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       setCurrentUser(user)
       if (user) {
-        const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', user.id).single()
+        // 🔥 Now fetching is_super_admin too
+        const { data: profile } = await supabase.from('profiles').select('tenant_id, is_super_admin').eq('id', user.id).single()
+        if (profile) setCurrentUser({ ...user, is_super_admin: profile.is_super_admin });
+        
         if (profile?.tenant_id) {
           // 🔥 Fetch EVERYTHING about the workspace, not just the status
           const { data: tenant } = await supabase.from('tenants').select('*').eq('id', profile.tenant_id).single()
@@ -395,7 +398,7 @@ export default function SettingsPage() {
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: 'auto' }}>
-              {tenantStatus === 'Master' && (
+              {(tenantStatus === 'Master' || currentUser?.is_super_admin) && (
                 <button 
                   onClick={() => router.push('/settings/master')}
                   className="saas-btn"
@@ -605,8 +608,8 @@ export default function SettingsPage() {
                     <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {p.full_name || 'New Staff Member'}
                     </div>
-                    <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
-                      ID: {p.id.split('-')[0]}...
+                    <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px', fontWeight: 'bold' }}>
+                      🏬 {p.branches?.name || 'Main Branch'}
                     </div>
                   </div>
 

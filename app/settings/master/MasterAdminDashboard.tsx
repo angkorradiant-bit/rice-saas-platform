@@ -29,13 +29,20 @@ export default function MasterAdminDashboard() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return router.push('/');
 
-    // 1. Check if this user belongs to the Master workspace
-    const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', user.id).single();
+    // 1. Get the user's workspace AND their God Mode status
+    const { data: profile } = await supabase.from('profiles').select('tenant_id, is_super_admin').eq('id', user.id).single();
     
+    // 🔥 2. GOD MODE CHECK: Unlock instantly if true
+    if (profile?.is_super_admin === true) {
+      setIsAuthorized(true);
+      fetchTenants();
+      return;
+    }
+    
+    // 3. Normal check: Are they in the Master workspace?
     if (profile?.tenant_id) {
       const { data: tenant } = await supabase.from('tenants').select('subscription_status').eq('id', profile.tenant_id).single();
       
-      // 2. If they are the Master Admin, unlock the page and fetch the data!
       if (tenant?.subscription_status === 'Master') {
         setIsAuthorized(true);
         fetchTenants();
@@ -43,7 +50,7 @@ export default function MasterAdminDashboard() {
       }
     }
     
-    // 3. The Kick-Out Mechanism: If they are a normal user, force them back to the POS.
+    // 4. The Kick-Out Mechanism
     router.push('/');
   };
 

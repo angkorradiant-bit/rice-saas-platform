@@ -12,26 +12,26 @@ const supabaseAdmin = createAdminClient(
 
 // 2. The Bouncer (Reads the token sent from the frontend)
 async function verifySuperAdmin(request: Request) {
-  // Read the authorization header
   const authHeader = request.headers.get('Authorization');
   if (!authHeader) return false;
   
   const token = authHeader.replace('Bearer ', '');
-
-  // Verify the token securely using the Admin client
   const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
   if (error || !user) return false;
 
-  // Find this user's workspace profile
+  // Find this user's profile
   const { data: profile } = await supabaseAdmin
     .from('profiles')
-    .select('tenant_id')
+    .select('tenant_id, is_super_admin')
     .eq('id', user.id)
     .single();
 
+  // 🔥 GOD MODE CHECK: If they are a Super Admin, let them in instantly!
+  if (profile?.is_super_admin === true) return true;
+
   if (!profile?.tenant_id) return false;
 
-  // Ensure their workspace is actually the 'Master' account
+  // Normal check for Master workspace
   const { data: tenant } = await supabaseAdmin
     .from('tenants')
     .select('subscription_status')
