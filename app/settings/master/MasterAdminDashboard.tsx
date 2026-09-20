@@ -48,18 +48,35 @@ export default function MasterAdminDashboard() {
   };
 
   const fetchTenants = async () => {
-    const res = await fetch('/api/admin/tenants');
+    // 1. Get the current user's session token
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    // 2. Attach the token to the fetch request
+    const res = await fetch('/api/admin/tenants', {
+      headers: {
+        'Authorization': `Bearer ${session?.access_token}`
+      }
+    });
+    
     const data = await res.json();
     if (data.tenants) setTenants(data.tenants);
     setLoading(false);
   };
 
   const updateTenant = async (tenantId: string, updates: Partial<Tenant>) => {
+    // Optimistic UI update
     setTenants(tenants.map(t => t.id === tenantId ? { ...t, ...updates } : t));
     
+    // 1. Get the current user's session token
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    // 2. Attach the token to the PATCH request
     await fetch('/api/admin/tenants', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session?.access_token}` // 🔥 Secure Ticket added here
+      },
       body: JSON.stringify({ tenantId, updates }),
     });
     
