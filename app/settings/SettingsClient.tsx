@@ -160,9 +160,25 @@ export default function SettingsPage() {
   }, [activeBranchId, fetchProfiles, fetchSettings])
 
   async function updateSetting(key: string, val: any) {
+    // 1. Securely grab the current user's exact workspace ID
+    const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', currentUser?.id).single();
+    const tenantId = profile?.tenant_id;
+    
+    if (!tenantId) return alert("Error: Could not verify your workspace.");
+
     const branchKey = activeBranchId === 0 ? key : `${key}_${activeBranchId}`;
-    const { error } = await supabase.from('app_settings').upsert({ setting_key: branchKey, setting_value: val }, { onConflict: 'setting_key' })
-    if (error) alert(`Error saving ${key}: ${error.message}`)
+    
+    // 2. Upsert using BOTH columns to satisfy the database constraint perfectly
+    const { error } = await supabase.from('app_settings').upsert(
+      { 
+        tenant_id: tenantId, 
+        setting_key: branchKey, 
+        setting_value: val 
+      }, 
+      { onConflict: 'tenant_id, setting_key' } // 🔥 Matches the exact table constraint
+    );
+    
+    if (error) alert(`Error saving ${key}: ${error.message}`);
   }
 
   async function handleSaveBranding() {
